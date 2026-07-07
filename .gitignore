@@ -1,0 +1,20 @@
+# Credentials — ห้ามขึ้น GitHub เด็ดขาด
+.env
+*.env
+
+# Output ที่ crawler สร้างขึ้นตอนรัน (ไม่ใช่โค้ด ไม่ต้อง track)
+led_output/
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# LandsMaps session cookies เก่า (แผนคือเลิกใช้วิธีนี้ แต่กันไว้เผื่อยังมีไฟล์ค้าง)
+Copy_as_cURL.txt
