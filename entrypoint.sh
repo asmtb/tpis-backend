@@ -5,9 +5,9 @@
 set -e   # หยุดทันทีถ้าขั้นตอนไหน error ไม่ต้องไปต่อขั้นถัดไป
 
 echo "===== STEP 1: Crawl LED ====="
-python crawler.py "$@"
+python led_crawler.py "$@"
 
 echo "===== STEP 2: Upload เข้า Supabase ====="
-python uploader.py --dir led_output
+python led_uploader.py --dir led_output
 
 echo "===== เสร็จสมบูรณ์ทั้ง crawl + upload ====="
