@@ -6,6 +6,19 @@
 
 ---
 
+## 2026.07.07-2
+
+### Added
+- `[schema]` migration `0004_condo_not_verified_status.sql` — เพิ่มค่า enum `not_verified` ให้ `asset_coordinates.verify_status`, เพิ่ม column `verified_by`/`verified_at` (audit trail), เพิ่ม RLS policy ให้ admin update ผ่านหน้าเว็บได้, แก้ view `assets_map` ให้โชว์ `not_verified` บนแผนที่ด้วย
+- `[landsmaps_collector.py]` `validate_area()` รับ `asset_type_id` แล้วข้ามการเทียบพื้นที่ถ้าเป็นห้องชุด (`asset_type_id == "002"`) — พื้นที่ที่ LED แสดง (พื้นที่ห้อง) เทียบกับ LandsMaps (พื้นที่ที่ดินทั้งแปลง) ไม่ได้โดยธรรมชาติ
+- `[landsmaps_collector.py]` เพิ่มสถิติ `area_not_applicable` แยกจาก `area_mismatch` — กันตัวเลขสรุปท้าย run เบี้ยวเวลามีห้องชุดเยอะ
+- `[landsmaps_collector.py]` เพิ่ม `_verify_status`/`_verify_note` ใน `coord_cache` entry — เตรียมไว้ให้ตัวเขียนเข้า Supabase (ยังไม่ได้ทำ ดู "ยังไม่เสร็จ" ด้านล่าง)
+
+### ยังไม่เสร็จ (รู้ตัวแล้ว ไม่ใช่ตกหล่นแบบไม่รู้)
+- `[landsmaps_collector.py]` ยังเขียนผลแค่ไฟล์ local (`landsmaps_coordinates.json`) ไม่ได้ต่อ Supabase โดยตรง — จะทำในรอบถัดไป (กลุ่ม 3: แยกไฟล์ / กลุ่ม 5: ย้าย cache ไป Supabase)
+
+---
+
 ## 2026.07.07-1
 
 ### Added

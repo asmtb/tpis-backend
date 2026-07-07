@@ -348,13 +348,31 @@ def parse_deedno(raw: str) -> list:
 
 
 
-def validate_area(led: dict, lm: dict) -> dict:
+def validate_area(led: dict, lm: dict, asset_type_id: str = "") -> dict:
     """
     เปรียบเทียบพื้นที่จาก LED กับ LandsMaps
     LED fields: rai, ngan, wa
     LandsMaps fields: rai, ngan, wa
-    return: {"match": True/False, "diff": {...}}
+
+    ⚠️ ห้องชุด (asset_type_id == "002"): LED แสดงพื้นที่ห้อง (unit area)
+    แต่ LandsMaps แสดงพื้นที่ที่ดินทั้งแปลงที่ตึกตั้งอยู่ — คนละมิติ
+    เทียบกันไม่ได้โดยธรรมชาติ ต้อง "ข้าม" การเทียบ ไม่ใช่แค่ผ่อนเกณฑ์
+    คืนค่า match=None เพื่อแยกออกจาก True/False ชัดเจน (ไม่ใช่ match ก็ไม่ใช่ mismatch)
+
+    return: {"match": True/False/None, "diff": {...}, "reason": str}
     """
+    if asset_type_id == "002":
+        return {
+            "match":  None,
+            "reason": "condo_area_not_comparable",
+            "led":    {"rai": parse_area(led.get("rai", 0)),
+                       "ngan": parse_area(led.get("ngan", 0)),
+                       "wa": parse_area(led.get("wa", 0))},
+            "lm":     {"rai": parse_area(lm.get("rai", 0)),
+                       "ngan": parse_area(lm.get("ngan", 0)),
+                       "wa": parse_area(lm.get("wa", 0))},
+        }
+
     led_rai    = parse_area(led.get("rai", 0))
     led_ngan   = parse_area(led.get("ngan", 0))
     led_wa     = parse_area(led.get("wa", 0))
@@ -364,9 +382,10 @@ def validate_area(led: dict, lm: dict) -> dict:
 
     match = (led_rai == lm_rai and led_ngan == lm_ngan and led_wa == lm_wa)
     return {
-        "match": match,
-        "led":   {"rai": led_rai, "ngan": led_ngan, "wa": led_wa},
-        "lm":    {"rai": lm_rai,  "ngan": lm_ngan,  "wa": lm_wa},
+        "match":  match,
+        "reason": "compared",
+        "led":    {"rai": led_rai, "ngan": led_ngan, "wa": led_wa},
+        "lm":     {"rai": lm_rai,  "ngan": lm_ngan,  "wa": lm_wa},
     }
 
 
@@ -428,7 +447,7 @@ stats = {
     "total": len(led_records), "processed": 0,
     "found": 0, "not_found": 0, "cache_hit": 0,
     "no_deedno": 0, "no_amphur": 0, "errors": 0,
-    "area_match": 0, "area_mismatch": 0,
+    "area_match": 0, "area_mismatch": 0, "area_not_applicable": 0,
 }
 
 sec(f"เริ่ม Collect ({len(led_records):,} records)")
@@ -438,9 +457,10 @@ for idx, record in enumerate(led_records):
     if idx in done_set:
         continue
 
-    deedno_raw = (record.get("deedno") or "").strip()
-    city       = (record.get("deedcity") or record.get("city") or "").strip()
-    amphur     = (record.get("deedampur") or record.get("ampur") or "").strip()
+    deedno_raw    = (record.get("deedno") or "").strip()
+    city          = (record.get("deedcity") or record.get("city") or "").strip()
+    amphur        = (record.get("deedampur") or record.get("ampur") or "").strip()
+    asset_type_id = (record.get("AssetTypeID") or record.get("asset_type_id") or "").strip()
 
     if not deedno_raw:
         stats["no_deedno"] += 1
@@ -489,11 +509,22 @@ for idx, record in enumerate(led_records):
                           extra={"provid": provid, "amph2": amph2, "deedno": deedno})
         else:
             record_found = True
-            area_check = validate_area(record, result)
-            if area_check["match"]:
+            area_check = validate_area(record, result, asset_type_id)
+
+            if area_check["reason"] == "condo_area_not_comparable":
+                # ห้องชุด — พิกัดใช้ได้ แต่พื้นที่เทียบอัตโนมัติไม่ได้ รอ admin verify ทีหลัง
+                stats["area_not_applicable"] += 1
+                verify_status = "not_verified"
+                verify_note = ("ห้องชุด — ไม่เทียบพื้นที่ (area เป็นพื้นที่ที่ดินทั้งแปลง "
+                                "ไม่ใช่พื้นที่ห้อง) รอ admin ยืนยัน")
+            elif area_check["match"]:
                 stats["area_match"] += 1
+                verify_status = "matched"
+                verify_note = None
             else:
                 stats["area_mismatch"] += 1
+                verify_status = "mismatch"
+                verify_note = "พื้นที่ LED กับ LandsMaps ไม่ตรงกัน — ควรตรวจสอบว่าจับ parcel ถูกแปลงหรือไม่"
 
             coord_cache[cache_key] = {
                 "parcellat":     result.get("parcellat"),
@@ -521,6 +552,8 @@ for idx, record in enumerate(led_records):
                 "_area_match":   area_check["match"],
                 "_area_led":     area_check["led"],
                 "_area_lm":      area_check["lm"],
+                "_verify_status": verify_status,   # 👈 matched/mismatch/not_verified
+                "_verify_note":   verify_note,     # 👈 เหตุผล (ถ้ามี) ให้ uploader เขียนต่อลง asset_coordinates.verify_note
             }
             stats["found"] += 1
 
@@ -534,7 +567,8 @@ for idx, record in enumerate(led_records):
         log(f"  [{idx+1:,}/{stats['total']:,}] {pct:.1f}% | "
             f"✅{stats['found']:,} ❌{stats['not_found']:,} "
             f"💾{stats['cache_hit']:,} ⚠️{stats['no_amphur']:,} "
-            f"📐match={stats['area_match']:,}/mismatch={stats['area_mismatch']:,}")
+            f"📐match={stats['area_match']:,}/mismatch={stats['area_mismatch']:,}/"
+            f"n_a={stats['area_not_applicable']:,}")
 
         with open(COORD_FILE, "w", encoding="utf-8") as f:
             json.dump(coord_cache, f, ensure_ascii=False)
@@ -558,6 +592,7 @@ log(f"  🔴 Errors      : {stats['errors']:,}")
 log(f"  Unique parcels : {len(coord_cache):,}")
 log(f"  📐 Area match  : {stats['area_match']:,}")
 log(f"  📐 Area mismatch: {stats['area_mismatch']:,}")
+log(f"  🏢 Area N/A (ห้องชุด, รอ verify): {stats['area_not_applicable']:,}")
 
 log(f"  📄 Not-found log: {NOT_FOUND_FILE}")
 
