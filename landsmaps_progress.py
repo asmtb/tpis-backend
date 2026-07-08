@@ -1,7 +1,7 @@
 """
 landsmaps_progress.py — บันทึก/โหลด progress เพื่อ resume ได้ถ้า crash กลางคัน
-ต่างจาก progress.py ของ LED (ที่ track เป็นรายจังหวัด) เพราะ landsmaps
-ประมวลผลทีละ record ไม่ใช่ทีละจังหวัด จึงต้อง track เป็น "done_indices" แทน
+เปลี่ยนจาก track ด้วย "index" ของไฟล์ JSON เดิม → track ด้วย "asset_id" จริง
+จาก Supabase เพราะไม่มีไฟล์ led_all_assets.json ให้ index อ้างอิงอีกต่อไป (กลุ่ม 5.1)
 """
 
 import json
@@ -19,27 +19,27 @@ class LandsMapsProgressTracker:
                 with open(self.path, encoding="utf-8") as f:
                     data = json.load(f)
                 return {
-                    "done_indices": set(data.get("done_indices", [])),
+                    "done_asset_ids": set(data.get("done_asset_ids", [])),
                     "stats": data.get("stats", {}),
                 }
             except Exception:
                 pass
-        return {"done_indices": set(), "stats": {}}
+        return {"done_asset_ids": set(), "stats": {}}
 
-    def is_done(self, idx: int) -> bool:
-        return idx in self.state["done_indices"]
+    def is_done(self, asset_id: int) -> bool:
+        return asset_id in self.state["done_asset_ids"]
 
-    def mark_done(self, idx: int):
-        self.state["done_indices"].add(idx)
+    def mark_done(self, asset_id: int):
+        self.state["done_asset_ids"].add(asset_id)
 
     def save(self, stats: dict):
         self.state["stats"] = stats
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump({
-                "done_indices": list(self.state["done_indices"]),
+                "done_asset_ids": list(self.state["done_asset_ids"]),
                 "stats": stats,
             }, f, ensure_ascii=False, indent=2)
 
     @property
     def done_count(self) -> int:
-        return len(self.state["done_indices"])
+        return len(self.state["done_asset_ids"])
