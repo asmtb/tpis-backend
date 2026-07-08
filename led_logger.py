@@ -186,9 +186,7 @@ class CrawlerLogger:
         avg_min_per_province = (
             elapsed_min / success_count if success_count else 0
         )
-        # ประมาณการ GitHub Actions time ถ้าทำทุกจังหวัด (77)
         est_all_provinces_min = avg_min_per_province * 77
-        est_monthly_daily     = est_all_provinces_min * 30
 
         self.log.info("")
         self.log.info("=" * 60)
@@ -205,10 +203,7 @@ class CrawlerLogger:
         self.log.info("--- Performance ---")
         self.log.info(f"  เฉลี่ยต่อหน้า     : {avg_sec_per_page:.2f} วินาที/หน้า")
         self.log.info(f"  เฉลี่ยต่อจังหวัด  : {avg_min_per_province:.1f} นาที/จังหวัด")
-        self.log.info("--- GitHub Actions estimate (77 จังหวัด) ---")
-        self.log.info(f"  เวลาต่อรอบทั้งหมด : ~{est_all_provinces_min:.0f} นาที")
-        self.log.info(f"  ถ้ารัน daily/เดือน: ~{est_monthly_daily:.0f} นาที")
-        self.log.info(f"  Free tier (2,000) : {'⚠️ เกิน!' if est_monthly_daily > 2000 else '✅ ผ่าน'}")
+        self.log.info(f"  ประมาณครบ 77 จังหวัด: ~{est_all_provinces_min:.0f} นาที")
         self.log.info("=" * 60)
 
         # Per-province table

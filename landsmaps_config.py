@@ -8,12 +8,12 @@ import re
 from pathlib import Path
 
 # ========== FILE PATHS ==========
-LED_FILE       = "led_all_assets.json"
-CURL_FILE      = "Copy_as_cURL.txt"          # ชั่วคราว — จะถูกแทนที่ด้วย Playwright ในกลุ่ม 4
+LED_FILE       = "led_all_assets.json"  # ไม่ใช้แล้วหลังกลุ่ม 5 (อ่านจาก Supabase แทน) — เก็บไว้เผื่ออ้างอิง
 BKK_AMPH_FILE  = "BANGKOK_AMPHUR.json"
-COORD_FILE     = "landsmaps_coordinates.json"  # จะเลิกใช้ไฟล์นี้หลังย้าย cache ไป Supabase (กลุ่ม 5)
+COORD_FILE     = "landsmaps_coordinates.json"  # ไม่ใช้แล้วหลังกลุ่ม 5 (cache อยู่ใน Supabase table parcels)
 PROGRESS_FILE  = "progress.json"
 NOT_FOUND_FILE = "landsmaps_not_found.jsonl"
+# CURL_FILE ถูกลบแล้วในกลุ่ม 4 — session มาจาก Playwright อัตโนมัติแทน (ดู landsmaps_session.py)
 
 # ========== TIMING ==========
 DELAY_SEC   = 0.5
@@ -23,6 +23,10 @@ SAVE_EVERY  = 200
 
 # ========== NOT_FOUND RETRY COOLDOWN (กลุ่ม 5.3) ==========
 NOT_FOUND_COOLDOWN_DAYS = 30  # ไม่ retry ซ้ำถ้าเพิ่งลองไปภายในกี่วัน
+
+# ========== PLAYWRIGHT (กลุ่ม 4) ==========
+# บน Cloud Run ต้องเป็น True เสมอ (ไม่มีจอ) — ปรับเป็น False ได้เฉพาะตอน debug บนเครื่องตัวเอง
+HEADLESS = True
 
 # ========== API ENDPOINTS ==========
 BASE     = "https://landsmaps.dol.go.th"

@@ -18,3 +18,7 @@ Thumbs.db
 
 # LandsMaps session cookies เก่า (แผนคือเลิกใช้วิธีนี้ แต่กันไว้เผื่อยังมีไฟล์ค้าง)
 Copy_as_cURL.txt
+
+# LandsMaps session cookies (มี active credentials — ห้าม commit)
+test_cookies.json
+scripts/test_cookies.json
