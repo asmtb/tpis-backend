@@ -8,6 +8,98 @@
 
 ---
 
+## 2026.07.10-4
+
+### Fixed — LandsMaps: JWT expiry detection ใน `fetch_parcel()`
+
+- `[landsmaps_session.py]` เพิ่ม **2-level session renewal** ใน `fetch_parcel()` แทนที่จะเปิด Playwright ใหม่ทุกครั้งที่ session มีปัญหา
+  เดิมตรวจเฉพาะ `"_Incapsula"` ใน response แล้วเรียก `init_session()` ทันที ทำให้เปิด browser และ solve hCaptcha ใหม่แม้จะเป็นแค่ JWT หมดอายุ
+
+  ปรับ logic ใหม่เป็น 2 ระดับตามสาเหตุจริง:
+
+  **Level 1 — JWT หมดอายุก่อน cookies**
+  - ตรวจจาก HTTP `401` หรือ API ส่ง error JSON ใน response body
+  - เรียก `refresh_jwt()` ก่อน (ไม่ต้องเปิด browser และไม่ต้อง solve hCaptcha)
+  - ถ้า refresh สำเร็จ → retry `fetch_parcel()` ของแปลงเดิมทันที
+  - ถ้า refresh ไม่สำเร็จ → escalate ไป Level 2
+
+  **Level 2 — Incapsula cookies หมดอายุ**
+  - ตรวจจาก response ที่ถูก redirect ไปหน้า Incapsula (`"_Incapsula"` ใน response)
+  - เรียก `init_session()` เปิด Playwright ใหม่และ solve hCaptcha อีกครั้ง
+  - เมื่อสร้าง session สำเร็จ → retry `fetch_parcel()` ของแปลงเดิมทันที
+
+### Changed — Session recovery behavior
+
+- `[landsmaps_session.py]` JWT ที่หมดอายุระหว่างรัน (ซึ่งเกิดบ่อยกว่าการหมดอายุของ Incapsula cookies) จะถูก renew แบบเงียบ ๆ โดยไม่ interrupt ผู้ใช้ เปิด Playwright ใหม่เฉพาะเมื่อถูก Incapsula block จริงเท่านั้น ลดจำนวน browser restart และลดการ solve hCaptcha ที่ไม่จำเป็น
+
+---
+
+## 2026.07.10-3
+
+### Fixed — LandsMaps: numeric fields ที่ API ส่งมาเป็น string คั่น comma
+
+- `[landsmaps_supabase.py]` เพิ่ม `_clean_numeric()` helper และ `_NUMERIC_FIELDS` set
+  สาเหตุ: LandsMaps API ส่ง `land_price_per_sqw` (และ `rai`, `ngan`, `wa`, `latitude`,
+  `longitude`) เป็น string แบบ `"53,000"` (คั่น comma หลักพัน) แทนที่จะเป็นตัวเลข
+  PostgreSQL column type `numeric` รับ string format นี้ไม่ได้ → 400 Bad Request ทุก record
+  ตรวจพบจาก error log ที่เพิ่มในรอบก่อน:
+  `{"code":"22P02","message":"invalid input syntax for type numeric: \"53,000\""}`
+  การแก้: clean ทุก numeric field ก่อน upsert ใน `upsert_parcel()` โดยอัตโนมัติ
+  ```
+  "53,000"   → 53000.0   ✅
+  "1,234.56" → 1234.56   ✅
+  None       → None      ✅
+  13.5       → 13.5      ✅
+  ""         → None      ✅
+  ```
+
+- `[run_landsmaps_local.bat]` เปลี่ยนข้อความทั้งหมดเป็นภาษาอังกฤษ
+  สาเหตุ: Windows cmd.exe ใช้ code page 850/437 (ไม่ใช่ UTF-8) ทำให้ภาษาไทยใน bat file
+  แสดงเป็น garbage character แก้โดยเปลี่ยนข้อความทั้งหมดเป็นภาษาอังกฤษ
+  (ไม่ได้ใช้ `chcp 65001` เพราะยังมีปัญหากับ font บาง terminal บน Windows)
+
+### Confirmed — LandsMaps end-to-end ทำงานได้สมบูรณ์ครั้งแรก ✅
+
+- `[landsmaps]` รัน `run_landsmaps_local.bat` สำเร็จครบ pipeline:
+  Chromium → solve hCaptcha → JWT → ดึง 9,062 assets → upsert parcels/asset_parcels → Supabase ✅
+  ข้อมูลพิกัด + ราคาที่ดินเข้า Supabase จริงเป็นครั้งแรกนับจากเริ่มโปรเจกต์
+
+---
+
+## 2026.07.10-2
+
+### Added — Phase B: LandsMaps Local Runner (แก้ปัญหา IP binding)
+
+- `[landsmaps_collector_local.py]` (ไฟล์ใหม่) — Local version ของ collector ที่ใช้
+  `init_session()` เปิด Chromium บนเครื่องตัวเองแทน `load_cookies_from_supabase()`
+  ความแตกต่างจาก `landsmaps_collector.py` (Cloud Run version):
+  - บังคับ `headless=False` เสมอ เพื่อให้เห็น browser และ solve hCaptcha ได้
+  - ไม่ต้องรัน `test_session.py` / `upload_cookies.py` ก่อน — ทำในครั้งเดียว
+  - logic การ collect, retry policy, และ Supabase write เหมือน Cloud Run version ทุกอย่าง
+
+- `[run_landsmaps_local.bat]` (ไฟล์ใหม่) — Windows batch script สำหรับ double-click รัน
+  ตรวจสอบ `.env` และ Python ก่อนรัน, ใช้ `%~dp0` ให้ cd ไปที่ root ของโปรเจกต์เสมอ
+  ไม่ว่าจะ double-click จาก directory ไหน
+
+### Confirmed — Incapsula IP binding (พิสูจน์แล้ว)
+
+- `[landsmaps]` ยืนยันด้วย one-liner test จากเครื่องตัวเอง (ไม่ depend กับโค้ดใดในโปรเจกต์):
+  cookies ชุดเดียวกัน เวลาเดียวกัน:
+  - เครื่องตัวเอง (Thailand IP) → `incapsula? False`, `got JWT? True` ✅
+  - Cloud Run (Google Cloud IP)  → `incapsula? True`,  `got JWT? False` ❌
+  Incapsula ฝัง IP fingerprint ลงใน cookies ตอนผ่าน JS challenge ครั้งแรก
+  การนำ cookies ไปใช้บน IP อื่นถูก block ทันทีโดยไม่มี error message ชัดเจน
+  สรุป: `load_cookies_from_supabase()` approach ไม่สามารถใช้บน Cloud Run ได้ถาวร
+
+### Architecture — แยก LandsMaps เป็น 2 version ชัดเจน
+
+| ไฟล์ | รันที่ไหน | Session | เหมาะกับ |
+|---|---|---|---|
+| `landsmaps_collector.py` | Cloud Run | `load_cookies_from_supabase()` | สำรองไว้ ถ้าหา workaround IP ได้ในอนาคต |
+| `landsmaps_collector_local.py` | เครื่องตัวเอง | `init_session()` | **ใช้งานจริงตอนนี้** |
+
+---
+
 ## [WIP] 2026.07.10-1
 
 ### Fixed — scripts: path และ import ที่พังเมื่อรันจากต่าง directory

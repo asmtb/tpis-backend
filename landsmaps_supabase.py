@@ -107,6 +107,26 @@ def is_retryable(cached_entry: dict | None) -> bool:
     return True  # mismatch/error — ลองใหม่ได้เสมอ
 
 
+def _clean_numeric(val):
+    """
+    แปลง numeric value ที่ LandsMaps API ส่งมาเป็น string คั่น comma
+    ให้เป็น float ที่ PostgreSQL รับได้
+    เช่น "53,000" → 53000.0, "1,234.56" → 1234.56, None → None
+    """
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return val
+    try:
+        return float(str(val).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+# fields ที่เป็น numeric ใน parcels table — ต้องผ่าน _clean_numeric ก่อน upsert
+_NUMERIC_FIELDS = {"land_price_per_sqw", "rai", "ngan", "wa", "latitude", "longitude"}
+
+
 # ================================================================
 # เขียนผลกลับเข้า Supabase
 # ================================================================
@@ -116,13 +136,25 @@ def upsert_parcel(provid: str, amph2: str, parcelno: str, data: dict) -> int:
     data ต้องมี: verify_status, verify_note (optional), แล้วก็ field พิกัด/ราคาที่เหลือ
     """
     url = f"{SUPABASE_URL}/rest/v1/parcels?on_conflict=provid,amph2,parcelno"
+
+    # clean numeric fields — LandsMaps API ส่งตัวเลขเป็น string คั่น comma เช่น "53,000"
+    # PostgreSQL numeric column รับ format นี้ไม่ได้ ต้องแปลงก่อนส่ง
+    cleaned_data = {
+        k: (_clean_numeric(v) if k in _NUMERIC_FIELDS else v)
+        for k, v in data.items()
+    }
+
     row = {
         "provid": provid, "amph2": amph2, "parcelno": parcelno,
         "last_attempted_at": datetime.now(BKK_TZ).isoformat(),
-        **data,
+        **cleaned_data,
     }
     hdrs = {**HEADERS, "Prefer": "resolution=merge-duplicates,return=representation"}
     r = _request_with_retry("POST", url, headers=hdrs, json=[row], timeout=30)
+    if not r.ok:
+        print(f"  ❌ upsert_parcel failed {r.status_code}: {r.text[:500]}")
+        print(f"     row sent: provid={provid!r} amph2={amph2!r} parcelno={parcelno!r}")
+        print(f"     data keys: {list(data.keys())}")
     r.raise_for_status()
     result = r.json()
     return result[0]["id"]
