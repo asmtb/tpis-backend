@@ -21,6 +21,7 @@ import requests
 from playwright.sync_api import sync_playwright
 
 from landsmaps_config import API_BASE, BASE, JWT_EP, RETRY_MAX, RETRY_DELAY
+from supabase_common import SUPABASE_URL, HEADERS, _request_with_retry
 
 _USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
@@ -33,6 +34,72 @@ class SessionManager:
         self.session     = requests.Session()
         self.renew_count = 0
         self._amphur_cache: dict[str, dict] = {}
+
+    def load_cookies_from_supabase(self) -> bool:
+        """
+        โหลด cookies จากตาราง landsmaps_sessions ใน Supabase (active row ล่าสุด)
+        เป็นวิธีหลักที่ใช้ตอนรันบน Cloud Run — ไม่ต้องเปิด Playwright เลย
+
+        workflow ที่รองรับ:
+          1. คุณ solve hCaptcha บนเครื่องตัวเอง (scripts/test_session.py)
+          2. upload test_cookies.json ผ่าน Admin UI → เข้า landsmaps_sessions
+          3. Cloud Run Job อ่าน cookies จากตารางนี้ตอนเริ่ม run
+        """
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/landsmaps_sessions"
+            r = _request_with_retry(
+                "GET", url,
+                headers=HEADERS,
+                params={
+                    "select":    "cookies_json,uploaded_at,note",
+                    "is_active": "eq.true",
+                    "order":     "uploaded_at.desc",
+                    "limit":     "1",
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+            rows = r.json()
+
+            if not rows:
+                self.logger.error(
+                    "❌ ไม่พบ active cookies ใน landsmaps_sessions — "
+                    "กรุณา solve hCaptcha บนเครื่องตัวเองแล้ว upload cookies ก่อน run"
+                )
+                return False
+
+            row = rows[0]
+            cookies_dict = row["cookies_json"]
+            uploaded_at  = row.get("uploaded_at", "?")
+            note         = row.get("note", "")
+            self.logger.info(f"📦 โหลด cookies จาก Supabase (uploaded: {uploaded_at[:16]}"
+                             f"{', ' + note if note else ''})")
+
+            self.session.cookies.clear()
+            for name, value in cookies_dict.items():
+                self.session.cookies.set(name, value, domain="landsmaps.dol.go.th")
+
+            self.session.headers.update({
+                "User-Agent":      _USER_AGENT,
+                "Accept":          "application/json, text/plain, */*",
+                "Accept-Language": "th-TH,th;q=0.9,en;q=0.8",
+                "Referer":         f"{BASE}/",
+                "Origin":          BASE,
+            })
+
+            ok = self.refresh_jwt()
+            if ok:
+                self.logger.info("✅ JWT OK — cookies ยังใช้งานได้")
+            else:
+                self.logger.warning(
+                    "⚠️  Cookies หมดอายุแล้ว (อายุ ~1-1.5 ชม.) — "
+                    "กรุณา solve hCaptcha ใหม่แล้ว upload cookies อีกครั้ง"
+                )
+            return ok
+
+        except Exception as e:
+            self.logger.error(f"❌ โหลด cookies จาก Supabase ไม่สำเร็จ: {e}")
+            return False
 
     def init_session(self) -> bool:
         """

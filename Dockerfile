@@ -6,12 +6,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# คัดลอกโค้ด crawler ทั้งหมด (รวม VERSION ไฟล์ด้วย — uploader.py อ่านตอน insert crawler_runs)
+# คัดลอกโค้ดทั้งหมด (รวม VERSION ไฟล์ด้วย — uploader.py อ่านตอน insert crawler_runs)
 COPY . .
 
-# ให้สิทธิ์รัน entrypoint script
-RUN chmod +x entrypoint.sh
+# ให้สิทธิ์รัน entrypoint scripts ทั้งสองตัว
+RUN chmod +x entrypoint_led.sh entrypoint_landsmaps.sh
 
-# รัน crawler แล้วต่อด้วย uploader ในการทำงานเดียวกัน
-# สำคัญ: ต้องทำก่อน container ถูกทำลาย เพราะดิสก์ของ Cloud Run Job เป็นแบบชั่วคราว
-ENTRYPOINT ["./entrypoint.sh"]
+# Default เป็น LED (Cloud Scheduler ใช้ตัวนี้)
+# LandsMaps Job จะ override ด้วย --entrypoint ตอน deploy
+ENTRYPOINT ["./entrypoint_led.sh"]

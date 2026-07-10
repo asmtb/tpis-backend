@@ -4,12 +4,97 @@
 แต่ละบรรทัดระบุ component ที่กระทบใน `[ ]` เพราะหลาย component ผูกกันแน่น
 (แก้โค้ดฝั่งหนึ่งมักต้องแก้ schema คู่กันด้วย)
 
-`[WIP]` = ยังทำไม่ครบทุกกลุ่มที่วางแผนไว้ ยังไม่ deploy จริง รอกลุ่ม 4 (session
-automation) เสร็จก่อนถึงจะปิดเป็นเลขเวอร์ชันจริงและ deploy ทั้งชุด
+`[WIP]` = ยังทำไม่ครบทุกกลุ่มที่วางแผนไว้ ยังไม่ deploy จริง
 
 ---
 
-## [WIP] 2026.07.08-1
+## [WIP] 2026.07.10-1
+
+### Fixed — scripts: path และ import ที่พังเมื่อรันจากต่าง directory
+
+- `[scripts/test_session.py]` แก้ `sys.path.insert(0, '.')` → ใช้ `Path(__file__).resolve().parent.parent` แทน
+  เพราะ `.` ชี้ไปที่ cwd ตอนรัน ซึ่งเปลี่ยนตาม directory ที่ยืนอยู่ ทำให้เกิด 2 error สลับกัน:
+  - รันจาก root (`python scripts/test_session.py`) → `AttributeError: 'SessionManager' object has no attribute 'init_session'`
+    (Python โหลด `landsmaps_session.py` ผิดตัว หรือโหลด `__pycache__` เวอร์ชันเก่า)
+  - รันจาก scripts/ (`python test_session.py`) → `ModuleNotFoundError: No module named 'landsmaps_logger'`
+    (`.` ชี้ที่ `scripts/` ซึ่งไม่มีไฟล์ `landsmaps_*`)
+  หลังแก้แล้ว รันได้ถูกต้องทั้ง 2 วิธีโดยไม่ต้อง cd ก่อน
+
+- `[scripts/test_session.py]` แก้ path ของ `test_cookies.json` จาก `open("test_cookies.json", "w")` (เซฟที่ cwd)
+  → `Path(__file__).resolve().parent / "test_cookies.json"` (เซฟที่ `scripts/` เสมอ ไม่ว่าจะรันจากไหน)
+  กันไม่ให้ `upload_cookies.py` หาไฟล์ไม่เจอ
+
+- `[scripts/upload_cookies.py]` แก้ `COOKIE_FILE` จาก `parent.parent / "test_cookies.json"` (root)
+  → `parent / "test_cookies.json"` (`scripts/`) ให้ตรงกับที่ `test_session.py` เซฟจริง
+
+- `[landsmaps_session.py]` คืน `def init_session(self) -> bool:` ที่หายไปตอน Phase A refactor
+  สาเหตุ: ตอนเพิ่ม `load_cookies_from_supabase()` เข้าไป บรรทัด `def init_session` หลุดออกไป
+  เหลือแต่ docstring + body ของ Playwright ลอยอยู่นอก method — Python จึงไม่รู้จัก method นี้เลย
+  ผลกระทบ: `fetch_parcel()` และ `get_amph2()` ที่เรียก `self.init_session()` ภายในพังด้วย
+  ตรวจพบจาก: `dir(SessionManager)` ไม่มี `init_session` ใน list
+
+- `[email_summary.py]` แก้ `FROM_EMAIL` จาก `noreply@tpis-notifications.com` (domain ที่ยังไม่ verify)
+  → `onboarding@resend.dev` (test sender ของ Resend ใช้ได้ทันทีไม่ต้อง verify domain)
+  เดิม Resend คืน 403 `"domain is not verified"` แล้ว job exit(1) ทันที ทำให้ collector ไม่ได้ทำงานเลย
+
+- `[led_logger.py]` แก้ timezone ทุก timestamp จาก `datetime.now()` (UTC บน Cloud Run)
+  → `_now()` ที่ใช้ `BKK_TZ` (UTC+7) และตั้ง `fmt.converter` ของ `logging.Formatter`
+  ให้ `%(asctime)s` แสดงเวลาไทย ไม่ใช่ UTC ที่ Cloud Run container ใช้เป็น default
+  พร้อมเปลี่ยน estimate section จาก "GitHub Actions free tier (2,000 นาที)"
+  → "Cloud Run Job task timeout" + จำนวนรอบต่อเดือนตาม schedule ทุก 3 วัน
+
+### Discovered — blocker หลักของ LandsMaps บน Cloud Run
+
+- `[landsmaps]` **Incapsula ผูก cookies กับ IP ต้นทาง** — cookies ที่ได้จากเครื่องตัวเอง (Thailand IP)
+  ใช้บน Cloud Run (Google Cloud IP / Singapore region) ไม่ได้เลย แม้จะ upload เข้า Supabase ทันทีก็ตาม
+  `refresh_jwt()` คืน False ทันที เพราะ Incapsula ตรวจว่า IP ที่ใช้ cookies ต่างจาก IP ที่ขอมา
+  สรุป: `load_cookies_from_supabase()` approach ไม่สามารถใช้งานได้กับ Cloud Run Job
+
+### Planned — Phase B: ย้าย LandsMaps มารันบนเครื่องตัวเองแทน Cloud Run
+
+- `[landsmaps_collector.py]` เพิ่ม `IS_CLOUD_RUN` detection ด้วย env var `K_SERVICE`
+  (Cloud Run ตั้งให้อัตโนมัติ ไม่ต้องตั้งเอง) แล้วแยก session init ตาม environment:
+  ```python
+  IS_CLOUD_RUN = os.environ.get("K_SERVICE") is not None
+  ok = session_mgr.load_cookies_from_supabase() if IS_CLOUD_RUN else session_mgr.init_session()
+  ```
+- `[scripts]` เพิ่ม `run_landsmaps_local.bat` (Windows) สำหรับรัน LandsMaps บนเครื่องตัวเอง
+  `init_session()` เปิด browser solve hCaptcha → ดึงข้อมูล → upload ผลลัพธ์เข้า Supabase
+  ในครั้งเดียว ไม่ต้องแยก step solve/upload cookies ก่อนแล้วค่อยรัน collector
+- `[email_summary.py]` เปลี่ยน `FROM_EMAIL` เป็น domain จริงเมื่อ verify DNS กับ Resend เสร็จ
+  (ปัจจุบันใช้ `onboarding@resend.dev` ไปก่อน ส่งได้ปกติแต่แสดง sender เป็น Resend)
+
+---
+
+## [WIP] 2026.07.09-1
+
+### Added — Phase A: Email Summary + Cookie Management
+
+- `[email_summary.py]` (ไฟล์ใหม่) module กลาง Resend API — `send_led_summary()` ส่งสรุปหลัง LED รันเสร็จ (รวมจำนวน asset ที่ยังไม่มีพิกัด LandsMaps), `send_landsmaps_summary()` ส่งสรุปหลัง LandsMaps รันเสร็จ (พร้อมแจ้งเตือนว่า cookies ถูกใช้แล้ว)
+- `[scripts/upload_cookies.py]` (ไฟล์ใหม่) รันบนเครื่องตัวเองหลัง solve hCaptcha เพื่อ deactivate cookies เดิมและเขียน cookies ชุดใหม่เข้า Supabase `landsmaps_sessions`
+- `[schema]` migration `0006_landsmaps_sessions.sql` — ตารางเก็บ hCaptcha cookies, enforce ว่ามีแค่ 1 active row ด้วย partial unique index, RLS admin-only
+
+### Changed — Phase A
+
+- `[led_uploader.py]` เพิ่ม `_count_pending_landsmaps()` (query asset ที่ยังไม่มีใน `asset_parcels`) + เรียก `send_led_summary()` ท้าย `main()`
+- `[landsmaps_collector.py]` เรียก `send_landsmaps_summary()` ใน `finally` + เปลี่ยนมาใช้ `load_cookies_from_supabase()` แทน Playwright `init_session()` เป็นหลัก
+- `[landsmaps_session.py]` เพิ่ม `load_cookies_from_supabase()` — อ่าน active cookies จากตาราง `landsmaps_sessions` แทนไฟล์ local (รองรับ Cloud Run ที่ไม่มี local file), Playwright `init_session()` ยังอยู่เป็น fallback
+- `[led_logger.py]` ลบ section "GitHub Actions estimate" ออก (ย้ายมาใช้ Cloud Run แล้ว) เหลือแค่ "ประมาณครบ 77 จังหวัด: ~X นาที"
+
+### Added — Infra: แยก Cloud Run Job สำหรับ LandsMaps
+
+- `[entrypoint_led.sh]` rename จาก `entrypoint.sh` เดิม (เนื้อหาเหมือนกัน)
+- `[entrypoint_landsmaps.sh]` (ไฟล์ใหม่) entrypoint สำหรับ LandsMaps Job โดยเฉพาะ
+- `[Dockerfile]` แก้ `ENTRYPOINT` จาก `entrypoint.sh` → `entrypoint_led.sh`, เพิ่ม `chmod +x` ให้ทั้งสองไฟล์
+- `[infra]` สร้าง Cloud Run Job `tpis-landsmaps` แยกจาก `tpis-cron-weekly` (LED) — manual trigger ได้ทุกเมื่อ ไม่ผูกกับ Cloud Scheduler, region `asia-southeast3`, memory 2Gi, timeout 3600s
+- `[infra]` เพิ่ม env vars `RESEND_API_KEY` และ `NOTIFY_EMAIL` ใน Cloud Run Jobs ทั้งสองตัว
+
+### ยังไม่เสร็จ
+- `[admin]` Admin UI สำหรับ upload cookies และ trigger run ผ่านหน้าเว็บ — รอทำตอนสร้างเว็บหลัก TPIS (Phase B/C)
+
+---
+
+## 2026.07.08-1
 
 ### Added — Group 1 (schema: เคสห้องชุด)
 - `[schema]` migration `0004_condo_not_verified_status.sql` — เพิ่มค่า enum `not_verified` ให้ verify status, เพิ่ม column `verified_by`/`verified_at` (audit trail), เพิ่ม RLS policy ให้ admin update ผ่านหน้าเว็บได้, แก้ view `assets_map` ให้โชว์ `not_verified` บนแผนที่ด้วย *(หมายเหตุ: ภายหลัง migration 0005 แทนที่ตารางเป้าหมายจาก `asset_coordinates` เป็น `parcels` แล้ว — ดูด้านล่าง)*
@@ -27,37 +112,34 @@ automation) เสร็จก่อนถึงจะปิดเป็นเ�
 
 ### Added — Group 5 (landsmaps: incremental fetching + parcel cache บน Supabase)
 - `[schema]` migration `0005_split_parcels_table.sql` — **แทนที่ `asset_coordinates` เดิมทั้งหมด** ด้วย 2 ตารางใหม่: `parcels` (1 แถวต่อ 1 แปลงจริง) + `asset_parcels` (junction table many-to-many) แก้ปัญหา `asset_coordinates` เดิมที่ใช้ `asset_id` เป็น PK คู่กับ `UNIQUE(provid,amph2,parcelno)` ซึ่งพังทันทีถ้าห้องชุดหลายร้อยห้องอ้างอิงแปลงเดียวกัน
-- `[landsmaps_supabase.py]` (ไฟล์ใหม่) — `get_checkpoint()`/`get_new_assets()` ดึงเฉพาะ asset ใหม่กว่ารอบที่สำเร็จล่าสุด (เลิกอ่าน `led_all_assets.json` ทั้งไฟล์), `get_cached_parcels()` โหลด cache จากตาราง `parcels` เอง (เลิกพึ่งไฟล์ local ที่หายตอนรันบน Cloud Run), `is_retryable()` แยก retry policy ตาม `verify_status` (matched/partial_match/not_verified ไม่ retry เลย, not_found retry ได้แต่มี cooldown 30 วัน)
-- `[landsmaps_collector.py]` เขียนใหม่ทั้งหมดให้พูดกับ Supabase โดยตรง เลิกใช้ไฟล์ local JSON (`led_all_assets.json`, `landsmaps_coordinates.json`) ทั้งคู่
+- `[landsmaps_supabase.py]` (ไฟล์ใหม่) — `get_checkpoint()`/`get_new_assets()` ดึงเฉพาะ asset ใหม่กว่ารอบที่สำเร็จล่าสุด, `get_cached_parcels()` โหลด cache จากตาราง `parcels` เอง, `is_retryable()` แยก retry policy ตาม `verify_status`
+- `[landsmaps_collector.py]` เขียนใหม่ทั้งหมดให้พูดกับ Supabase โดยตรง เลิกใช้ไฟล์ local JSON ทั้งคู่
 - `[landsmaps_progress.py]` เปลี่ยนจาก track ด้วย index ของไฟล์ JSON → track ด้วย `asset_id` จริงจาก Supabase
 
 ### Changed — แยก `supabase_common.py` กลาง
-- `[supabase_common.py]` (ไฟล์ใหม่) รวม env loading, `HEADERS`, `BKK_TZ`, `_request_with_retry`, `sb_upsert`, `sb_insert_run`, `sb_update_run`, และ `paginated_select()` (pagination helper ใหม่) — ใช้ร่วมกันระหว่าง LED และ LandsMaps
-- `[led_uploader.py]` ลบ env loading/retry wrapper/`sb_*` ที่ย้ายออกแล้ว → import จาก `supabase_common` แทน, `get_asset_ids()` เขียนใหม่ให้ใช้ `paginated_select()` (25 บรรทัด → 8 บรรทัด)
-- `[landsmaps_supabase.py]` เปลี่ยนจาก import `led_uploader` โดยตรง → import `supabase_common` แทน ตัดการพึ่งพาข้ามฝั่ง LED/LandsMaps ที่เคยผูกกันไม่จำเป็น
-
-### ยังไม่เสร็จ
-- `[landsmaps]` ยังพึ่งพา `Copy_as_cURL.txt` แบบ copy-paste ด้วยมือ (cookies หมดอายุเร็ว ต้องมีคนคอยแก้) — เป็น blocker หลักที่ยังเอาขึ้น Cloud Run Jobs แบบอัตโนมัติเต็มรูปแบบไม่ได้ รอกลุ่ม 4 (session automation ด้วย Playwright)
+- `[supabase_common.py]` (ไฟล์ใหม่) รวม env loading, `HEADERS`, `BKK_TZ`, `_request_with_retry`, `sb_upsert`, `sb_insert_run`, `sb_update_run`, และ `paginated_select()`
+- `[led_uploader.py]` ลบ env loading/retry wrapper/`sb_*` ที่ย้ายออกแล้ว → import จาก `supabase_common`, `get_asset_ids()` เขียนใหม่ให้ใช้ `paginated_select()` (25 บรรทัด → 8 บรรทัด)
+- `[landsmaps_supabase.py]` เปลี่ยนจาก import `led_uploader` → import `supabase_common` ตัดการพึ่งพาข้ามฝั่งที่ไม่จำเป็น
 
 ---
 
 ## 2026.07.07-1
 
 ### Added
-- `[infra]` ย้าย crawler จาก GitHub Actions → Google Cloud Run Jobs (Bangkok region, `asia-southeast3`) — แก้ปัญหา IP ถูกบล็อกโดย `asset.led.go.th` (บล็อกทั้ง ASN ของ Google Cloud region อื่นๆ แบบ silent TCP drop แต่ Bangkok region ผ่าน)
+- `[infra]` ย้าย crawler จาก GitHub Actions → Google Cloud Run Jobs (Bangkok region, `asia-southeast3`) — แก้ปัญหา IP ถูกบล็อกโดย `asset.led.go.th`
 - `[infra]` Cloud Scheduler ตั้งรันอัตโนมัติทุก 3 วัน ตี 2 เวลาไทย (`Asia/Bangkok` timezone)
-- `[docker]` `entrypoint.sh` รัน `led_crawler.py` ต่อด้วย `led_uploader.py` ในการทำงานเดียวกัน — จำเป็นเพราะดิสก์ของ Cloud Run Job เป็นแบบชั่วคราว (ephemeral) ไฟล์ JSON จะหายทันทีที่ container ถูกทำลายถ้าไม่อัพโหลดก่อน
+- `[docker]` `entrypoint_led.sh` รัน `led_crawler.py` ต่อด้วย `led_uploader.py` ในการทำงานเดียวกัน
 - `[versioning]` เพิ่มไฟล์ `VERSION`, migration folder (`supabase/migrations/`), เลิกใช้เลข version ต่อท้ายชื่อไฟล์
 
 ### Fixed
-- `[schema]` GRANT สิทธิ์ `service_role` ที่ขาดหายตั้งแต่สร้าง schema — แก้ 403 Forbidden ตอน insert `crawler_runs`/`assets` (migration `0002`)
-- `[led_uploader.py]` เพิ่ม `dedupe_records()` ตัดข้อมูลซ้ำ key (`led_province_id`, `str_bid_num`, `deedno_raw`) ก่อน upsert — แก้ Postgres error 21000 (`ON CONFLICT DO UPDATE command cannot affect row a second time`) ที่ทำให้ทั้ง batch พังยกก้อน
-- `[led_uploader.py]` เพิ่ม pagination ให้ `get_asset_ids()` ด้วย `Range` header — แก้บั๊กจังหวัดที่มี record เกิน 1,000 แถว (เช่นกรุงเทพ 9,055 รายการ) upload `asset_bid_rounds` ไม่ครบแบบเงียบๆ ไม่มี error โผล่ใน log
-- `[led_uploader.py]` เพิ่ม `_request_with_retry()` ให้ทุกจุดที่คุย Supabase REST API — retry สูงสุด 3 ครั้งแบบ backoff เฉพาะ network error/5xx (ไม่ retry 4xx)
+- `[schema]` GRANT สิทธิ์ `service_role` ที่ขาดหายตั้งแต่สร้าง schema — แก้ 403 Forbidden (migration `0002`)
+- `[led_uploader.py]` เพิ่ม `dedupe_records()` — แก้ Postgres error 21000
+- `[led_uploader.py]` เพิ่ม pagination ให้ `get_asset_ids()` — แก้บั๊กจังหวัดที่มี record เกิน 1,000
+- `[led_uploader.py]` เพิ่ม `_request_with_retry()` — retry สูงสุด 3 ครั้งแบบ backoff
 
 ### Changed
-- `[led_uploader.py]` `triggered_by` แก้จาก `"github_actions"` → `"cloud_run"` ให้ตรงกับที่รันจริง
-- `[versioning]` เพิ่ม prefix `led_` ให้ไฟล์ LED ทั้งหมด (`led_config.py`, `led_session.py`, `led_parser.py`, `led_progress.py`, `led_logger.py`, `led_crawler.py`, `led_uploader.py`) แยกชัดเจนจาก `landsmaps_*`
+- `[led_uploader.py]` `triggered_by` แก้จาก `"github_actions"` → `"cloud_run"`
+- `[versioning]` เพิ่ม prefix `led_` ให้ไฟล์ LED ทั้งหมด แยกชัดเจนจาก `landsmaps_*`
 
 ---
 

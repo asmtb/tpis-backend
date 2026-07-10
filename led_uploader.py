@@ -21,6 +21,7 @@ flow:
 import argparse
 import json
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from supabase_common import (
     SUPABASE_URL, HEADERS, BKK_TZ, _request_with_retry,
     sb_upsert, sb_insert_run, sb_update_run, paginated_select,
 )
+from email_summary import send_led_summary
 
 
 def _read_code_version() -> str:
@@ -274,6 +276,33 @@ def get_asset_ids(province_id: str) -> dict[str, int]:
     return {f"{row['str_bid_num']}|{row['deedno_raw']}": row["id"] for row in rows}
 
 
+def _count_pending_landsmaps() -> int:
+    """
+    นับ asset ที่ยังไม่มีพิกัด (ไม่มีใน asset_parcels เลย)
+    ใช้แจ้งใน LED email เพื่อเตือนให้ run LandsMaps
+    """
+    try:
+        # นับ asset ทั้งหมด
+        url = f"{SUPABASE_URL}/rest/v1/assets"
+        r = _request_with_retry("GET", url,
+                                 headers={**HEADERS, "Prefer": "count=exact"},
+                                 params={"select": "id"}, timeout=30)
+        total = int(r.headers.get("content-range", "*/0").split("/")[-1])
+
+        # นับ asset ที่มีพิกัดแล้ว (มีใน asset_parcels อย่างน้อย 1 แถว)
+        url2 = f"{SUPABASE_URL}/rest/v1/asset_parcels"
+        r2 = _request_with_retry("GET", url2,
+                                   headers={**HEADERS, "Prefer": "count=exact"},
+                                   params={"select": "asset_id"}, timeout=30)
+        r2.raise_for_status()
+        rows = r2.json()
+        has_parcel = len({row["asset_id"] for row in rows})
+
+        return max(0, total - has_parcel)
+    except Exception:
+        return 0  # ถ้า query ไม่สำเร็จ ส่ง email ปกติโดยไม่มีตัวเลข
+
+
 # ================================================================
 # Main upload logic
 # ================================================================
@@ -422,6 +451,20 @@ def main():
     if stats["errors"]:
         print(f"   ⚠️  มี error — ดูรายละเอียดใน crawler_runs table")
     print(f"{'='*50}")
+
+    # ส่ง email สรุป — ไม่ raise ถ้า email ส่งไม่ได้ (กัน crawler พัง)
+    pending = _count_pending_landsmaps()
+    send_led_summary(
+        stats={
+            "total_provinces_success": stats["total_provinces"],
+            "total_provinces_failed":  len(stats["errors"]),
+            "total_records_fetched":   stats["total_records"],
+            "duration_sec":            round(duration, 2),
+            "error_message":           (json.dumps(stats["errors"], ensure_ascii=False)
+                                        if stats["errors"] else None),
+        },
+        pending_landsmaps=pending,
+    )
 
 
 if __name__ == "__main__":
