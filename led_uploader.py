@@ -383,7 +383,11 @@ def main():
     ap.add_argument("--dir",   default="led_output", help="โฟลเดอร์ที่มี JSON")
     ap.add_argument("--batch", default=100, type=int, help="batch size per request")
     ap.add_argument("--province", help="อัพโหลดเฉพาะ province_id เช่น 10")
+    ap.add_argument("--crawler-exit", default=0, type=int,
+                    help="exit code ของ led_crawler.py (ส่งจาก entrypoint เพื่อรู้ว่า crawler fail)")
     args = ap.parse_args()
+
+    crawler_failed = args.crawler_exit != 0
 
     output_dir = Path(args.dir)
     json_files = sorted(output_dir.glob("*.json"))
@@ -423,48 +427,66 @@ def main():
         "errors":          [],
     }
 
+    # ถ้า crawler fail ให้บันทึกเป็น error ทันทีเพื่อให้ email แจ้งถูกต้อง
+    if crawler_failed:
+        stats["errors"].append({"province": "crawler", "error": f"led_crawler.py exited with code {args.crawler_exit}"})
+
     t_start = time.perf_counter()
 
-    for json_file in json_files:
-        upload_province(json_file, run_id, args.batch, stats)
+    try:
+        for json_file in json_files:
+            upload_province(json_file, run_id, args.batch, stats)
 
-    duration = time.perf_counter() - t_start
+        duration = time.perf_counter() - t_start
 
-    # อัพ crawler_run summary
-    if run_id:
-        sb_update_run(run_id, {
-            "finished_at":              datetime.now(BKK_TZ).isoformat(),
-            "status":                   "completed" if not stats["errors"] else "partial",
-            "total_provinces_success":  stats["total_provinces"],
-            "total_records_fetched":    stats["total_records"],
-            "duration_sec":             round(duration, 2),
-            "error_message":            json.dumps(stats["errors"], ensure_ascii=False)
-                                        if stats["errors"] else None,
-        })
+        # อัพ crawler_run summary
+        if run_id:
+            sb_update_run(run_id, {
+                "finished_at":              datetime.now(BKK_TZ).isoformat(),
+                "status":                   "completed" if not stats["errors"] else "partial",
+                "total_provinces_success":  stats["total_provinces"],
+                "total_records_fetched":    stats["total_records"],
+                "duration_sec":             round(duration, 2),
+                "error_message":            json.dumps(stats["errors"], ensure_ascii=False)
+                                            if stats["errors"] else None,
+            })
 
-    print(f"\n{'='*50}")
-    print(f"✅ อัพโหลดเสร็จ")
-    print(f"   จังหวัด:  {stats['total_provinces']}")
-    print(f"   Records:  {stats['total_records']:,}")
-    print(f"   เวลา:     {duration/60:.1f} นาที")
-    print(f"   Errors:   {len(stats['errors'])}")
-    if stats["errors"]:
-        print(f"   ⚠️  มี error — ดูรายละเอียดใน crawler_runs table")
-    print(f"{'='*50}")
+        print(f"\n{'='*50}")
+        print(f"✅ อัพโหลดเสร็จ")
+        print(f"   จังหวัด:  {stats['total_provinces']}")
+        print(f"   Records:  {stats['total_records']:,}")
+        print(f"   เวลา:     {duration/60:.1f} นาที")
+        print(f"   Errors:   {len(stats['errors'])}")
+        if stats["errors"]:
+            print(f"   ⚠️  มี error — ดูรายละเอียดใน crawler_runs table")
+        print(f"{'='*50}")
 
-    # ส่ง email สรุป — ไม่ raise ถ้า email ส่งไม่ได้ (กัน crawler พัง)
-    pending = _count_pending_landsmaps()
-    send_led_summary(
-        stats={
-            "total_provinces_success": stats["total_provinces"],
-            "total_provinces_failed":  len(stats["errors"]),
-            "total_records_fetched":   stats["total_records"],
-            "duration_sec":            round(duration, 2),
-            "error_message":           (json.dumps(stats["errors"], ensure_ascii=False)
-                                        if stats["errors"] else None),
-        },
-        pending_landsmaps=pending,
-    )
+    except Exception as e:
+        duration = time.perf_counter() - t_start
+        stats["errors"].append({"province": "uploader", "error": str(e)})
+        if run_id:
+            sb_update_run(run_id, {
+                "finished_at":  datetime.now(BKK_TZ).isoformat(),
+                "status":       "failed",
+                "error_message": str(e),
+            })
+        print(f"💥 Uploader ล้มเหลว: {e}")
+        raise
+
+    finally:
+        # ส่ง email เสมอ ไม่ว่า crawler หรือ uploader จะ fail หรือไม่
+        pending = _count_pending_landsmaps()
+        send_led_summary(
+            stats={
+                "total_provinces_success": stats["total_provinces"],
+                "total_provinces_failed":  len(stats["errors"]),
+                "total_records_fetched":   stats["total_records"],
+                "duration_sec":            round(time.perf_counter() - t_start, 2),
+                "error_message":           (json.dumps(stats["errors"], ensure_ascii=False)
+                                            if stats["errors"] else None),
+            },
+            pending_landsmaps=pending,
+        )
 
 
 if __name__ == "__main__":

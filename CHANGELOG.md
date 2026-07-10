@@ -8,6 +8,34 @@
 
 ---
 
+## 2026.07.10-5
+
+### Fixed — LED: email แจ้งเตือนไม่ถูกส่งเมื่อ crawler fail
+
+- `[entrypoint_led.sh]` ลบ `set -e` ออก แล้วเปลี่ยนเป็นเก็บ exit code ของ crawler ไว้แทน
+  สาเหตุ: `set -e` ทำให้ shell หยุดทันทีถ้า `led_crawler.py` fail โดยไม่รัน `led_uploader.py`
+  ต่อ ทำให้ `send_led_summary()` ไม่ถูกเรียกเลย — ไม่มี email แจ้งเตือนไม่ว่า crawler จะ
+  success หรือ fail
+  แก้โดยเก็บ exit code ไว้ใน `CRAWLER_EXIT` แล้วส่งต่อให้ uploader ผ่าน `--crawler-exit`
+  เพื่อให้ uploader รู้ว่า crawler พังและ reflect ใน email ได้ถูกต้อง
+
+- `[led_uploader.py]` เพิ่ม `--crawler-exit` argument รับ exit code จาก crawler
+  และ wrap upload loop ด้วย `try/finally` เพื่อให้ `send_led_summary()` ถูกเรียก **เสมอ**
+  ไม่ว่าจะเกิด exception กลางทางหรือไม่
+  - ถ้า `crawler-exit != 0` → บันทึก error เพิ่มเข้า stats ทันที ให้ email แสดงว่า crawler fail
+  - ถ้า uploader เองพัง → `finally` ยังส่ง email ได้ พร้อม error message ที่เกิดขึ้น
+  - `crawler_run` record ใน Supabase จะถูก update เป็น `status=failed` ในกรณีพัง
+
+  กรณีที่รองรับทั้งหมด:
+  | crawler | uploader | email ส่งไหม (เดิม) | email ส่งไหม (ใหม่) |
+  |---|---|---|---|
+  | ✅ success | ✅ success | ✅ | ✅ |
+  | ❌ fail | ✅ success | ❌ | ✅ พร้อมแจ้ง crawler error |
+  | ✅ success | ❌ fail | ❌ | ✅ พร้อมแจ้ง uploader error |
+  | ❌ fail | ❌ fail | ❌ | ✅ พร้อมแจ้งทั้งคู่ |
+
+---
+
 ## 2026.07.10-4
 
 ### Fixed — LandsMaps: JWT expiry detection ใน `fetch_parcel()`
