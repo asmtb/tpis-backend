@@ -8,6 +8,18 @@
 
 ---
 
+## 2026.07.11-2
+
+### Fixed — Schema: GRANT SELECT ให้ `anon` role (แก้ permission denied บนเว็บ)
+
+- `[schema]` migration `0008_grant_anon_select.sql` — GRANT SELECT ให้ `anon` role สำหรับทุก table และ view ที่ TPIS Web ต้องอ่าน
+  สาเหตุ: `VITE_SUPABASE_ANON_KEY` ใช้ role `anon` ของ PostgreSQL — RLS policy "public read" ตรวจสิทธิ์ได้ถูกต้อง แต่ต้องมี table-level GRANT ก่อน PostgreSQL จึงจะยอมให้ query ผ่าน
+  อาการ: หน้าค้นหาแสดง `permission denied for table assets` ทันทีที่โหลด แม้ RLS จะเปิดอยู่
+  อ้างอิง: เหมือน migration 0002 ที่แก้ปัญหาเดียวกันสำหรับ `service_role`
+  เพิ่ม `alter default privileges` กัน table ใหม่ในอนาคตพังซ้ำโดยไม่ต้องรัน migration ซ้ำ
+
+---
+
 ## 2026.07.11-1
 
 ### Added — Schema: RLS policy ให้ anon key อ่าน `crawler_runs` ได้
