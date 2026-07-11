@@ -8,6 +8,16 @@
 
 ---
 
+## 2026.07.11-1
+
+### Added — Schema: RLS policy ให้ anon key อ่าน `crawler_runs` ได้
+
+- `[schema]` migration `0007_anon_read_crawler_runs.sql` — เพิ่ม policy `"public read crawler_runs"` และ `"public read crawler_run_details"` ให้ anon/public Supabase key อ่านตารางทั้งสองได้
+  เหตุผล: Admin page ของ TPIS Web ใช้ `VITE_SUPABASE_ANON_KEY` (ไม่ใช่ service role) — policy เดิม `"analyst read crawler_runs"` กำหนดเฉพาะ role analyst/admin ทำให้ตารางว่างเปล่าบน Admin page ทั้งที่มีข้อมูล
+  ไฟล์ SQL มีทั้ง 2 ตัวเลือก: public read (แนะนำสำหรับ internal tool) หรือ authenticated-only (เหมาะถ้าจะเปิดสาธารณะ)
+
+---
+
 ## 2026.07.10-5
 
 ### Fixed — LED: email แจ้งเตือนไม่ถูกส่งเมื่อ crawler fail
@@ -29,7 +39,7 @@
   กรณีที่รองรับทั้งหมด:
   | crawler | uploader | email ส่งไหม (เดิม) | email ส่งไหม (ใหม่) |
   |---|---|---|---|
-  | ✅ success | ✅ success | ✅ | ✅ |
+  | ✅ success | ✅ success | ❌ | ✅ |
   | ❌ fail | ✅ success | ❌ | ✅ พร้อมแจ้ง crawler error |
   | ✅ success | ❌ fail | ❌ | ✅ พร้อมแจ้ง uploader error |
   | ❌ fail | ❌ fail | ❌ | ✅ พร้อมแจ้งทั้งคู่ |
