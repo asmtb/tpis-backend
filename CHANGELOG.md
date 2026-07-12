@@ -8,6 +8,22 @@
 
 ---
 
+## 2026.07.12-1
+
+### Added — Schema: ตาราง th_provinces, th_districts, th_subdistricts
+
+- `[schema]` migration `0009_thai_geo_tables.sql` — ข้อมูลภูมิศาสตร์ไทยครบ 3 ระดับ
+  ที่มา: [kongvut/thai-province-data](https://github.com/kongvut/thai-province-data) (MIT License)
+  - `th_provinces`: 77 จังหวัด พร้อม `led_province_id` เชื่อมกับ `assets.led_province_id`
+  - `th_districts`: 930 อำเภอ FK → th_provinces
+  - `th_subdistricts`: 7,452 ตำบล FK → th_districts + zip_code
+  - GIN index บน `name_th` ทั้ง districts และ subdistricts รองรับ ILIKE autocomplete
+  - RLS public read + GRANT SELECT to anon ครบทุกตาราง
+  - `alter default privileges` กัน table ใหม่ในอนาคต
+  ใช้งาน: SearchFilters ดึง districts ผ่าน `th_provinces.led_province_id → th_districts.province_id`
+
+---
+
 ## 2026.07.11-2
 
 ### Fixed — Schema: GRANT SELECT ให้ `anon` role (แก้ permission denied บนเว็บ)
@@ -26,7 +42,7 @@
 
 - `[schema]` migration `0007_anon_read_crawler_runs.sql` — เพิ่ม policy `"public read crawler_runs"` และ `"public read crawler_run_details"` ให้ anon/public Supabase key อ่านตารางทั้งสองได้
   เหตุผล: Admin page ของ TPIS Web ใช้ `VITE_SUPABASE_ANON_KEY` (ไม่ใช่ service role) — policy เดิม `"analyst read crawler_runs"` กำหนดเฉพาะ role analyst/admin ทำให้ตารางว่างเปล่าบน Admin page ทั้งที่มีข้อมูล
-  ไฟล์ SQL มีทั้ง 2 ตัวเลือก: public read (แนะนำสำหรับ internal tool) หรือ authenticated-only (เหมาะถ้าจะเปิดสาธารณะ)
+  ไฟล์ SQL มีทั้ง 2 ตัวเลือก: public read (แนะนำสำหรับ internal tool) หรือ authenticated-only
 
 ---
 
