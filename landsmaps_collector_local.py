@@ -19,6 +19,7 @@ workflow:
            RESEND_API_KEY, NOTIFY_EMAIL ครบก่อนรัน
 """
 
+import argparse
 import sys
 import time
 
@@ -39,6 +40,18 @@ HEADLESS_LOCAL = False
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--retry-not-found", action="store_true",
+        help=(
+            "ยิง API ซ้ำสำหรับ parcel ที่เคย not_found โดย ignore cooldown "
+            "และ ignore checkpoint (ดึง assets ทั้งหมด) — ใช้เมื่อสงสัยว่า "
+            "LandsMaps ไม่เสถียรรอบที่แล้ว"
+        ),
+    )
+    args = ap.parse_args()
+    retry_not_found: bool = args.retry_not_found
+
     logger = LandsMapsLogger()
     run_id = None
     success = False
@@ -68,15 +81,21 @@ def main():
             sys.exit(1)
         logger.info("✅ Session พร้อม — เริ่ม collect ทันที (cookies ใช้ได้ ~1-1.5 ชม.)")
 
-        # ----- 5.1: ดึงเฉพาะ asset ใหม่กว่า checkpoint -----
-        checkpoint = get_checkpoint()
-        logger.info(f"Checkpoint (รอบล่าสุดที่สำเร็จ): {checkpoint or 'ไม่มี — รอบแรก ดึงทั้งหมด'}")
+        # ----- 5.1: ดึง assets -----
+        if retry_not_found:
+            # ignore checkpoint — ดึงทุก asset แล้วให้ cache policy ใหม่จัดการเอง
+            logger.info("🔁 --retry-not-found: ignore checkpoint ดึง assets ทั้งหมด")
+            checkpoint = None
+        else:
+            checkpoint = get_checkpoint()
+            logger.info(f"Checkpoint (รอบล่าสุดที่สำเร็จ): {checkpoint or 'ไม่มี — รอบแรก ดึงทั้งหมด'}")
+
         assets = get_new_assets(checkpoint)
         stats["total"] = len(assets)
-        logger.info(f"Asset ใหม่ที่ต้องประมวลผล: {len(assets):,}")
+        logger.info(f"Asset ที่ต้องประมวลผล: {len(assets):,}")
 
         if not assets:
-            logger.info("ไม่มี asset ใหม่ — จบงานทันที")
+            logger.info("ไม่มี asset — จบงานทันที")
             success = True
             return
 
@@ -84,10 +103,19 @@ def main():
         parcel_cache = get_cached_parcels()
         logger.info(f"Parcel cache จาก Supabase: {len(parcel_cache):,} แปลง")
 
-        progress = LandsMapsProgressTracker("progress.json")
-        logger.info(f"Progress (resume ถ้า crash รอบนี้): {progress.done_count:,} asset ทำแล้ว")
+        if retry_not_found:
+            # นับ not_found ใน cache เพื่อแสดงว่าจะ retry กี่แปลง
+            nf_count = sum(1 for v in parcel_cache.values() if v.get("verify_status") == "not_found")
+            logger.info(f"🔁 --retry-not-found: จะ retry {nf_count:,} แปลงที่เคย not_found (ignore cooldown)")
 
-        logger.section(f"เริ่ม Collect ({len(assets):,} assets ใหม่)")
+        progress = LandsMapsProgressTracker("progress.json")
+        if retry_not_found and progress.done_count > 0:
+            logger.info(f"🔁 --retry-not-found: reset progress.json ({progress.done_count:,} asset) เพื่อ re-process ใหม่ทั้งหมด")
+            progress.reset()
+        else:
+            logger.info(f"Progress (resume ถ้า crash รอบนี้): {progress.done_count:,} asset ทำแล้ว")
+
+        logger.section(f"เริ่ม Collect ({len(assets):,} assets)")
 
         for i, asset in enumerate(assets):
             asset_id = asset["id"]
@@ -127,7 +155,14 @@ def main():
                 cached_entry = parcel_cache.get(cache_key)
 
                 # ----- 5.3: เช็ค retry policy ก่อนตัดสินใจยิง API -----
-                if not is_retryable(cached_entry):
+                # --retry-not-found: ถือว่า not_found retryable เสมอ (ignore cooldown)
+                # ปกติ: ใช้ policy ปกติ (not_found มี cooldown 30 วัน)
+                retryable = (
+                    True
+                    if retry_not_found and cached_entry and cached_entry.get("verify_status") == "not_found"
+                    else is_retryable(cached_entry)
+                )
+                if not retryable:
                     stats["cache_hit"] += 1
                     if cached_entry and cached_entry.get("verify_status") != "not_found":
                         link_asset_parcel(asset_id, cached_entry["id"], None, None)

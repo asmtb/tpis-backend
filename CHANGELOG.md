@@ -8,6 +8,38 @@
 
 ---
 
+## 2026.07.12-2
+
+### Discovered — `get_new_assets()` คืน 0 asset หลัง reset parcels
+
+- `[landsmaps]` พบว่าการ reset `verify_status = 'error'` ใน `parcels` table ไม่ทำให้ collector ดึง asset กลับมา เพราะ `get_new_assets()` กรอง asset โดยเทียบ `scraped_at > checkpoint` ไม่ได้ดูจาก `parcels` เลย ทำให้ asset 9,062 รายการที่ scrape ก่อน checkpoint ทั้งหมดไม่ถูกนับว่าเป็น "ใหม่"
+- `[landsmaps]` การรัน `.bat` หลัง reset โดยไม่ลบ `progress.json` ทำให้ collector skip ทุก asset ทันที เพราะ `progress.json` จำว่าทำครบแล้ว ทั้ง 2 ปัญหาทำให้ได้ `Asset ที่ต้องประมวลผล: 0` ทุกรอบ
+
+### Fixed (manual) — Reset checkpoint + progress เพื่อ retry
+
+- `[Supabase SQL]` mark `crawler_runs` ที่ `status='completed'` และ `total_records_fetched=0` ให้เป็น `partial` ซ้ำจนไม่มี `completed` เหลือ → `get_checkpoint()` คืน `None` → `get_new_assets(None)` ดึงทุก asset โดยไม่กรองเวลา
+- `[local]` ลบ `progress.json` ด้วยมือก่อนรัน เพื่อ reset `done_asset_ids`
+
+### Added — `--retry-not-found` flag (วิธีที่ 1: ไม่ต้องแตะ DB)
+
+- `[landsmaps_collector_local.py]` เพิ่ม `argparse` และ `--retry-not-found` flag
+  - ignore checkpoint → `get_new_assets(None)` ดึงทุก asset
+  - override cache policy → `not_found` retry ได้ทันที (ไม่ต้องรอ cooldown 30 วัน)
+  - auto-reset `progress.json` ผ่าน `progress.reset()` ถ้ายังมี `done_asset_ids` ค้างอยู่
+- `[landsmaps_progress.py]` เพิ่ม `reset()` method สำหรับล้าง state และลบ `progress.json` อัตโนมัติ
+- `[run_landsmaps_local.bat]` รองรับ argument `--retry`
+
+  ```
+  run_landsmaps_local.bat
+  run_landsmaps_local.bat --retry
+  ```
+
+### Fixed — import `argparse` หายไป
+
+- `[landsmaps_collector_local.py]` เพิ่ม `import argparse` ที่ตกหล่นหลังเพิ่ม CLI argument
+
+---
+
 ## 2026.07.12-1
 
 ### Added — Schema: ตาราง th_provinces, th_districts, th_subdistricts

@@ -43,3 +43,9 @@ class LandsMapsProgressTracker:
     @property
     def done_count(self) -> int:
         return len(self.state["done_asset_ids"])
+
+    def reset(self):
+        """ล้าง progress ทั้งหมด — ใช้ตอน --retry-not-found เพื่อ re-process ทุก asset ใหม่"""
+        self.state = {"done_asset_ids": set(), "stats": {}}
+        if self.path.exists():
+            self.path.unlink()

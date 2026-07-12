@@ -4,30 +4,29 @@
 :: (Incapsula binds cookies to the originating IP — Google Cloud IPs are always blocked)
 ::
 :: Usage:
-::   double-click this file
-::   or: cd E:\Website\TPIS\tpis_production && run_landsmaps_local.bat
-::
-:: What happens:
-::   1. Chromium opens automatically
-::   2. Solve hCaptcha (if prompted) then click Submit
-::   3. Browser closes itself -> collector starts immediately
-::   4. Results written to Supabase (parcels, asset_parcels)
-::   5. Summary email sent to your inbox
+::   run_landsmaps_local.bat              — normal run (new assets only)
+::   run_landsmaps_local.bat --retry      — retry all not_found from previous runs
+::                                          (ignores checkpoint + ignores 30-day cooldown)
 
 setlocal
-
-:: ---- Always cd to project root regardless of where this file is launched from ----
 cd /d "%~dp0"
+
+set RETRY_FLAG=
+if /i "%1"=="--retry" set RETRY_FLAG=--retry-not-found
 
 echo.
 echo ===================================================
 echo   TPIS LandsMaps Collector - Local Mode
+if defined RETRY_FLAG (
+echo   Mode: RETRY not_found ^(ignore checkpoint^)
+) else (
+echo   Mode: Normal ^(new assets only^)
+)
 echo   %DATE% %TIME%
 echo ===================================================
 echo.
 echo [1/2] Checking environment...
 
-:: Check .env exists
 if not exist ".env" (
     echo [ERROR] .env file not found.
     echo         Please create .env with SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
@@ -36,7 +35,6 @@ if not exist ".env" (
     exit /b 1
 )
 
-:: Check Python exists
 where python >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found. Please install Python first.
@@ -50,7 +48,7 @@ echo [2/2] Starting LandsMaps Collector...
 echo       Chromium will open - solve hCaptcha then click Submit.
 echo.
 
-python landsmaps_collector_local.py
+python landsmaps_collector_local.py %RETRY_FLAG%
 
 echo.
 if errorlevel 1 (
