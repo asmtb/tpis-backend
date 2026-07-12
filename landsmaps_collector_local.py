@@ -20,10 +20,11 @@ workflow:
 """
 
 import argparse
+import random
 import sys
 import time
 
-from landsmaps_config import PROVINCE_CODE, DELAY_SEC, SAVE_EVERY, load_bangkok_amphur
+from landsmaps_config import PROVINCE_CODE, DELAY_SEC, DELAY_JITTER, SAVE_EVERY, load_bangkok_amphur
 from landsmaps_logger import LandsMapsLogger
 from landsmaps_parser import parse_deedno, validate_area
 from landsmaps_progress import LandsMapsProgressTracker
@@ -223,7 +224,7 @@ def main():
                     link_asset_parcel(asset_id, parcel_id, area_match, area_note)
                     stats["found"] += 1
 
-                time.sleep(DELAY_SEC)
+                time.sleep(DELAY_SEC + random.uniform(0, DELAY_JITTER))
 
             progress.mark_done(asset_id)
 

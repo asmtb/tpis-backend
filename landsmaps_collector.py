@@ -27,7 +27,6 @@ from landsmaps_supabase import (
     get_checkpoint, get_new_assets, get_cached_parcels, is_retryable,
     upsert_parcel, link_asset_parcel, start_run, finish_run,
 )
-from email_summary import send_landsmaps_summary
 
 
 def main():
@@ -49,11 +48,11 @@ def main():
         bkk_amph_dol = load_bangkok_amphur(logger)
 
         session_mgr = SessionManager(logger, headless=HEADLESS)
-        # โหลด cookies จาก Supabase (วิธีหลักบน Cloud Run)
-        # คุณ upload cookies ผ่าน Admin UI หลัง solve hCaptcha บนเครื่องตัวเอง
-        if not session_mgr.load_cookies_from_supabase():
-            logger.error("❌ ไม่ได้ session — cookies หมดอายุหรือยังไม่ได้ upload")
+        if not session_mgr.init_session():
+            logger.error("❌ ไม่ได้ session/JWT — Incapsula อาจบล็อก Playwright อยู่ "
+                         "(ดูหมายเหตุข้อจำกัดใน landsmaps_session.py)")
             sys.exit(1)
+        logger.info("✅ Session + JWT OK")
 
         # ----- 5.1: ดึงเฉพาะ asset ใหม่กว่า checkpoint -----
         checkpoint = get_checkpoint()
@@ -210,7 +209,6 @@ def main():
         raise
     finally:
         finish_run(run_id, stats, success)
-        send_landsmaps_summary(stats)  # ส่งเสมอ ไม่ raise ถ้า email ไม่สำเร็จ
         logger.close()
 
 

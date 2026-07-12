@@ -8,6 +8,37 @@
 
 ---
 
+## 2026.07.13-1
+
+### Fixed — LandsMaps: rate limit / bot detection จาก LandsMaps เมื่อรัน collector
+
+- `[landsmaps_config.py]` ปรับค่า delay และ retry ให้ human-like มากขึ้น:
+  ```
+  DELAY_SEC    0.5  → 2.0   วินาที  (เพิ่ม 4x)
+  DELAY_JITTER —   → 1.0   วินาที  (ใหม่ — random jitter เพิ่มอีก 0–1.0 วิ)
+  RETRY_DELAY  5   → 10    วินาที  (เพิ่ม 2x)
+  SAVE_EVERY   200 → 100   records (save บ่อยขึ้น กันหายถ้า crash)
+  ```
+  สาเหตุ: DELAY_SEC = 0.5 ทำให้ script ยิง API ทุก 0.5 วินาทีต่อเนื่อง 75+ นาที
+  LandsMaps ตรวจจับว่าเป็น bot แล้ว throttle IP ชั่วคราว ทำให้แม้ค้นหาด้วยมือก็ไม่เจอ
+  ผลลัพธ์คือ parcel ที่โดน throttle ได้ผล not_found ผิดพลาดทั้งหมด
+
+- `[landsmaps_collector_local.py]` เปลี่ยน `time.sleep(DELAY_SEC)` เป็น
+  `time.sleep(DELAY_SEC + random.uniform(0, DELAY_JITTER))`
+  → รอจริง 2.0–3.0 วินาทีต่อ request แบบสุ่ม
+  random jitter = เพิ่มเวลารอแบบสุ่มเล็กน้อยทุกรอบ แทนที่จะรอตรงๆ ทุกครั้ง
+  (bot detection จับ pattern เวลาคงที่ได้ง่ายกว่า pattern สุ่ม)
+
+  ผลกระทบต่อเวลารัน:
+  | รายการ | delay เดิม | delay ใหม่ |
+  |---|---|---|
+  | 9,062 assets | ~75 นาที | ~4.5–6 ชั่วโมง |
+
+  หมายเหตุ: cookies อายุ ~1.5 ชม. — session renewal (init_session / refresh_jwt)
+  จะ handle อัตโนมัติระหว่างรัน ไม่ต้อง manual intervene
+
+---
+
 ## 2026.07.12-2
 
 ### Discovered — `get_new_assets()` คืน 0 asset หลัง reset parcels
