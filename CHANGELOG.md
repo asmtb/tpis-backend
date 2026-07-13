@@ -8,6 +8,25 @@
 
 ---
 
+## 2026.07.14-1
+
+### Fixed — Schema: province_summary view group by ผิด ทำให้ข้อมูลซ้ำ
+
+- `[schema]` migration `0010_fix_province_summary_view.sql` — สร้าง view ใหม่ทับ view เดิม
+  สาเหตุ: view เดิม (0001) group by `led_province_id, led_province_name, city` 3 column
+  ทำให้ 1 จังหวัดแตกเป็นหลาย row ตามค่าของ `city` field ในทรัพย์
+  (กรุงเทพมหานคร 4,976 / null 4,077 / กรุงเทพา 9 — แทนที่จะเป็น 9,062 row เดียว)
+  แก้โดย group by เฉพาะ `led_province_id, led_province_name` และลบ `city` ออก
+  ไม่มีผลกับข้อมูลใน table — เป็นแค่การเปลี่ยน view definition
+
+  รัน SQL นี้ใน Supabase SQL Editor ไฟล์เดียวจบ — ทำ 5 ขั้นตอนติดกัน:
+  1. DROP assets_map, auction_today, province_summary
+  2. สร้าง province_summary ใหม่ (group by province เท่านั้น)
+  3. สร้าง assets_map คืน (จาก 0005)
+  4. สร้าง auction_today คืน (จาก 0001)
+  5. GRANT SELECT ให้ anon ทั้ง 3 view (กัน permission denied หลัง recreate)
+---
+
 ## 2026.07.13-1
 
 ### Fixed — LandsMaps: rate limit / bot detection จาก LandsMaps เมื่อรัน collector
