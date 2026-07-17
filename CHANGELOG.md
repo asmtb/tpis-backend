@@ -8,6 +8,17 @@
 
 ---
 
+## 2026.07.18-1
+
+### Fixed — Location: ใช้ deed fields เป็นหลักทุกหน้า + ราคาเต็มใน GIS Map
+
+#### Schema (`0011_add_deed_fields_to_assets_map.sql`)
+- `[schema]` migration `0011` — เพิ่ม `deedcity`, `deedampur`, `deedtumbol` เข้า `assets_map` view
+  เหตุผล: view เดิมมีแค่ `city/ampur/tumbol` (ที่อยู่จริง) ซึ่งหลายรายการว่างเปล่า
+  ทำให้ frontend ไม่สามารถ fallback ไป deed fields ได้เมื่อ query จาก assets_map
+
+---
+
 ## 2026.07.14-1
 
 ### Fixed — Schema: province_summary view group by ผิด ทำให้ข้อมูลซ้ำ
