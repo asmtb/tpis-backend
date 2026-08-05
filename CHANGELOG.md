@@ -8,6 +8,16 @@
 
 ---
 
+## 2026.08.05-1
+
+### Fixed — led_uploader: AdminPage show new list for each new crawler run
+
+- `[led_uploader]` เพิ่ม `_count_new_assets(gte, lte)` นับ asset ที่ `created_at` อยู่ในช่วง `started_at`–`finished_at` ของ run นั้น (ใช้ได้เพราะ `created_at` ตั้งครั้งเดียวตอน insert แรก ไม่ถูกเขียนทับตอน upsert ซ้ำ)
+- `[led_uploader]` เขียนค่านี้ลง `crawler_runs.total_records_new` — คอลัมน์นี้มีอยู่แล้วใน schema baseline แค่ไม่เคยถูกเซ็ตค่า ไม่ต้องรัน migration เพิ่ม
+- `[email_summary]` โชว์ในทั้ง console log และ email summary โดยเพิ่มแถว "🆕 รายการใหม่"
+
+---
+
 ## 2026.07.18-1
 
 ### Fixed — Location: ใช้ deed fields เป็นหลักทุกหน้า + ราคาเต็มใน GIS Map

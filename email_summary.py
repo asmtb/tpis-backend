@@ -90,6 +90,7 @@ def send_led_summary(stats: dict, pending_landsmaps: int = 0):
     success_count  = stats.get("total_provinces_success", 0)
     failed_count   = stats.get("total_provinces_failed",  0)
     total_records  = stats.get("total_records_fetched",   0)
+    new_records    = stats.get("total_records_new",       0)
     duration_sec   = stats.get("duration_sec",            0)
     errors         = stats.get("error_message")
     overall_ok     = failed_count == 0 and not errors
@@ -152,6 +153,12 @@ def send_led_summary(stats: dict, pending_landsmaps: int = 0):
         <tr style="background:#f3f4f6">
           <td style="padding:6px 10px"><strong>Records ทั้งหมด</strong></td>
           <td style="padding:6px 10px">{total_records:,}</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 10px"><strong>🆕 รายการใหม่</strong></td>
+          <td style="padding:6px 10px">
+            <span style="color:{'#16a34a' if new_records > 0 else 'inherit'}">{new_records:,}</span>
+          </td>
         </tr>
         <tr>
           <td style="padding:6px 10px"><strong>ระยะเวลา</strong></td>

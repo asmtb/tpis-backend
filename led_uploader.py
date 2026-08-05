@@ -303,6 +303,35 @@ def _count_pending_landsmaps() -> int:
         return 0  # ถ้า query ไม่สำเร็จ ส่ง email ปกติโดยไม่มีตัวเลข
 
 
+def _count_new_assets(gte_iso: str, lte_iso: str | None = None) -> int:
+    """
+    นับ asset ที่เป็น "รายการใหม่" ของรอบ run นี้จริงๆ (ไม่ใช่แค่ที่ถูก upsert)
+
+    หลักการ: assets.created_at ตั้งค่าแค่ตอน insert ครั้งแรกเท่านั้น (default now())
+    ไม่มี trigger ไหนเขียนทับตอน upsert ซ้ำ (trigger เดียวที่มีคือ trg_assets_updated_at
+    ซึ่งแก้แค่ updated_at) — เพราะฉะนั้น asset ที่ "ใหม่จริง" ของรอบนี้ คือแถวที่
+    created_at อยู่ในช่วง [started_at, finished_at] ของ run นั้น ส่วน asset เดิมที่ถูก
+    upsert ซ้ำ (แค่อัพเดตราคา/สถานะ) จะยังมี created_at เป็นของรอบเก่า ไม่ถูกนับซ้ำ
+
+    คืน 0 ถ้า query ไม่สำเร็จ (metric เสริม ไม่อยากให้ uploader ล้มเพราะเรื่องนี้)
+    """
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/assets"
+        if lte_iso:
+            params = {"select": "id", "and": f"(created_at.gte.{gte_iso},created_at.lte.{lte_iso})"}
+        else:
+            params = {"select": "id", "created_at": f"gte.{gte_iso}"}
+        r = _request_with_retry(
+            "GET", url,
+            headers={**HEADERS, "Prefer": "count=exact"},
+            params=params, timeout=30,
+        )
+        r.raise_for_status()
+        return int(r.headers.get("content-range", "*/0").split("/")[-1])
+    except Exception:
+        return 0
+
+
 # ================================================================
 # Main upload logic
 # ================================================================
@@ -439,13 +468,20 @@ def main():
 
         duration = time.perf_counter() - t_start
 
+        # นับรายการใหม่จริง (created_at อยู่ในช่วงรอบนี้) — ใช้โชว์ในหน้า Admin
+        finished_at = datetime.now(BKK_TZ).isoformat()
+        new_count   = _count_new_assets(started_at, finished_at)
+        stats["total_records_new"] = new_count
+        print(f"   🆕 รายการใหม่จริง (created_at ในรอบนี้): {new_count:,}")
+
         # อัพ crawler_run summary
         if run_id:
             sb_update_run(run_id, {
-                "finished_at":              datetime.now(BKK_TZ).isoformat(),
+                "finished_at":              finished_at,
                 "status":                   "completed" if not stats["errors"] else "partial",
                 "total_provinces_success":  stats["total_provinces"],
                 "total_records_fetched":    stats["total_records"],
+                "total_records_new":        new_count,
                 "duration_sec":             round(duration, 2),
                 "error_message":            json.dumps(stats["errors"], ensure_ascii=False)
                                             if stats["errors"] else None,
@@ -455,6 +491,7 @@ def main():
         print(f"✅ อัพโหลดเสร็จ")
         print(f"   จังหวัด:  {stats['total_provinces']}")
         print(f"   Records:  {stats['total_records']:,}")
+        print(f"   🆕 ใหม่:  {new_count:,}")
         print(f"   เวลา:     {duration/60:.1f} นาที")
         print(f"   Errors:   {len(stats['errors'])}")
         if stats["errors"]:
@@ -481,6 +518,7 @@ def main():
                 "total_provinces_success": stats["total_provinces"],
                 "total_provinces_failed":  len(stats["errors"]),
                 "total_records_fetched":   stats["total_records"],
+                "total_records_new":       stats.get("total_records_new", 0),
                 "duration_sec":            round(time.perf_counter() - t_start, 2),
                 "error_message":           (json.dumps(stats["errors"], ensure_ascii=False)
                                             if stats["errors"] else None),
