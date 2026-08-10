@@ -8,6 +8,52 @@
 
 ---
 
+## 2026.08.11-1
+
+### Added — Admin: นับ + ดูรายการ asset ใหม่ต่อ crawler run
+
+- `[led_uploader.py]` เพิ่ม `_count_new_assets(gte_iso, lte_iso)` นับ asset ที่เป็น
+  "รายการใหม่จริง" ของรอบนั้น โดยเช็คว่า `assets.created_at` อยู่ในช่วง
+  `[started_at, finished_at]` ของ run
+  หลักการ: `created_at` ตั้งค่าแค่ตอน insert ครั้งแรกเท่านั้น (default `now()`)
+  ไม่มี trigger ไหนเขียนทับตอน upsert ซ้ำ (มีแค่ `trg_assets_updated_at` ที่แก้แค่
+  `updated_at`) — asset เดิมที่ถูก upsert ซ้ำ (อัพเดตราคา/สถานะ) จะยังมี `created_at`
+  เป็นของรอบเก่า ไม่ถูกนับซ้ำเป็น "ใหม่"
+- `[led_uploader.py]` เขียนผลนับเข้าคอลัมน์ `crawler_runs.total_records_new` ที่มีอยู่แล้ว
+  ใน schema baseline (`0001_baseline_schema.sql`) แต่ไม่เคยถูกเซ็ตค่ามาก่อน —
+  **ไม่ต้องรัน migration เพิ่ม**
+- `[led_uploader.py]` print สรุปจำนวนรายการใหม่ท้าย console log (`🆕 รายการใหม่จริง`)
+- `[email_summary.py]` `send_led_summary()` เพิ่มแถว "🆕 รายการใหม่" ในตารางสรุปที่ส่งทาง
+  email หลัง LED run เสร็จ
+
+### Added — LandsMaps: รันเฉพาะ asset จากไฟล์ JSON ที่ export มาจากหน้า Admin
+
+- `[landsmaps_collector_local.py]` เพิ่ม flag `--file <path.json>` — โหลด asset list
+  จากไฟล์ JSON แทนการดึงจาก checkpoint ปกติ (`get_new_assets()`)
+  รองรับ field ตรงกับที่ export จากหน้า Admin เป๊ะ (`deedno_raw`, `deedcity`/`city`,
+  `deedampur`/`ampur`, `asset_type_id`, `led_province_id`, `rai`/`ngan`/`wa`) ไม่ต้อง
+  แปลง field เพิ่ม
+  รองรับทั้ง 2 รูปแบบไฟล์: `{"assets": [...]}` (จากปุ่ม Export JSON หน้า Admin) หรือ
+  list ตรงๆ เผื่อสร้างไฟล์เองแบบง่ายๆ
+  ใช้งาน: `python landsmaps_collector_local.py --file tpis_new_assets_run123_2026-08-10.json`
+- `[landsmaps_collector_local.py]` อัพเดต docstring หัวไฟล์ ระบุโหมดพิเศษ
+  `--retry-not-found` และ `--file` พร้อมตัวอย่างคำสั่ง
+- `[run_landsmaps_local.bat]` รองรับ `--file` ผ่าน 3 วิธี:
+  พิมพ์ `run_landsmaps_local.bat --file myfile.json`, พิมพ์
+  `run_landsmaps_local.bat myfile.json` เฉยๆ, หรือลาก-วางไฟล์ JSON ทับตัว `.bat` เลย
+  (Windows ส่ง path ของไฟล์ที่ลากมาเป็น `%1` โดยอัตโนมัติ)
+- `[run_landsmaps_local.bat]` ปรับข้อความหน้าจอให้บอก mode ที่กำลังรัน (Normal /
+  RETRY not_found / FILE) ให้ชัดเจนก่อนเริ่ม
+
+### Context
+
+การแก้ครั้งนี้มาคู่กับฝั่ง frontend (`tpis` repo, ดู `CHANGELOG_WEB_110826.md`) ที่เพิ่ม
+ปุ่ม "⬇ Export JSON" ในหน้า Admin → modal "รายการใหม่" ของแต่ละ crawler run
+เพื่อ export asset ชุดนั้นเป็นไฟล์แล้วเอามารันกับ `--file` flag นี้โดยเฉพาะ
+ไม่ต้องรอ checkpoint ปกติและไม่ปนกับ asset ใหม่ของรอบอื่น
+
+---
+
 ## 2026.08.05-1
 
 ### Fixed — led_uploader: AdminPage show new list for each new crawler run

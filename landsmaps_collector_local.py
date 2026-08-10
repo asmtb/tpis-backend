@@ -15,11 +15,19 @@ workflow:
   4. ผลลัพธ์เขียนเข้า Supabase (parcels, asset_parcels)
   5. ได้รับ email สรุปผลหลัง run เสร็จ
 
+โหมดพิเศษ:
+  --retry-not-found   ดึงทุก asset ใหม่ (ไม่สนใจ checkpoint) แล้ว retry parcel ที่
+                       เคย not_found โดยไม่สนใจ cooldown
+  --file <path.json>  รันเฉพาะ asset ในไฟล์ (จากปุ่ม "⬇ Export JSON" ในหน้า Admin
+                       modal "รายการใหม่" ของแต่ละ crawler run) — ข้าม checkpoint
+                       ไปเลย เช่น: python landsmaps_collector_local.py --file tpis_new_assets_run123_2026-08-10.json
+
 หมายเหตุ: ต้องมี .env ที่มี SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
            RESEND_API_KEY, NOTIFY_EMAIL ครบก่อนรัน
 """
 
 import argparse
+import json
 import random
 import sys
 import time
@@ -50,8 +58,18 @@ def main():
             "LandsMaps ไม่เสถียรรอบที่แล้ว"
         ),
     )
+    ap.add_argument(
+        "--file",
+        help=(
+            "ไฟล์ JSON ที่ export จากหน้า Admin (ปุ่ม '⬇ Export JSON' ใน modal "
+            "'รายการใหม่' ของแต่ละ crawler run) — รันเฉพาะ asset ในไฟล์นี้เท่านั้น "
+            "ข้าม checkpoint/get_new_assets ปกติไปเลย เหมาะกับตอนอยากดึงพิกัดเฉพาะ "
+            "รอบ LED ที่เพิ่งรันไปแบบเจาะจง โดยไม่ปนกับ asset ใหม่รอบอื่น"
+        ),
+    )
     args = ap.parse_args()
     retry_not_found: bool = args.retry_not_found
+    file_path: str | None = args.file
 
     logger = LandsMapsLogger()
     run_id = None
@@ -83,15 +101,24 @@ def main():
         logger.info("✅ Session พร้อม — เริ่ม collect ทันที (cookies ใช้ได้ ~1-1.5 ชม.)")
 
         # ----- 5.1: ดึง assets -----
-        if retry_not_found:
+        if file_path:
+            logger.info(f"📂 โหลด assets จากไฟล์ {file_path} (ข้าม checkpoint ปกติ)")
+            with open(file_path, encoding="utf-8") as f:
+                payload = json.load(f)
+            # รองรับทั้ง 2 รูปแบบ: {"assets": [...]} (จากปุ่ม Export JSON ในหน้า Admin)
+            # หรือ list ตรงๆ เผื่อใครสร้างไฟล์เองแบบง่ายๆ
+            assets = payload.get("assets", []) if isinstance(payload, dict) else payload
+            logger.info(f"Asset จากไฟล์: {len(assets):,} รายการ")
+        elif retry_not_found:
             # ignore checkpoint — ดึงทุก asset แล้วให้ cache policy ใหม่จัดการเอง
             logger.info("🔁 --retry-not-found: ignore checkpoint ดึง assets ทั้งหมด")
             checkpoint = None
+            assets = get_new_assets(checkpoint)
         else:
             checkpoint = get_checkpoint()
             logger.info(f"Checkpoint (รอบล่าสุดที่สำเร็จ): {checkpoint or 'ไม่มี — รอบแรก ดึงทั้งหมด'}")
+            assets = get_new_assets(checkpoint)
 
-        assets = get_new_assets(checkpoint)
         stats["total"] = len(assets)
         logger.info(f"Asset ที่ต้องประมวลผล: {len(assets):,}")
 
