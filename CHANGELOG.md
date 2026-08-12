@@ -8,6 +8,50 @@
 
 ---
 
+## 2026.08.12-3
+
+### Fixed — Schema: GRANT SELECT ให้ `authenticated` ครอบทุกตาราง/view (แก้ login แล้วอ่านข้อมูลไม่ได้เลย)
+
+- `[schema]` migration `0013_grant_authenticated_select_all.sql` — GRANT SELECT
+  แบบ blanket (`grant select on all tables in schema public to authenticated`)
+  แทนการไล่ grant ทีละตารางแบบที่ `0012` ทำไว้
+- `[schema]` สาเหตุ: หลัง migration `0012` (แก้ `authenticated` อ่าน `role` ตัวเอง
+  ไม่ได้) — พอ login แล้ว Supabase client เปลี่ยนไปส่ง request ด้วย role
+  `authenticated` แทน `anon` โดยอัตโนมัติ แต่ `0012` grant ให้ `authenticated`
+  แค่ 3 ตาราง (`users`, `parcels`, `landsmaps_sessions`) + `user_*` เท่านั้น
+  ไม่ได้ครอบตารางที่หน้าเว็บ public ใช้อ่านอยู่เดิม เช่น `assets`, `crawler_runs`,
+  และ view ต่างๆ (`assets_map`, `province_summary`, `auction_today`) ที่เคย grant
+  ให้ `anon` ไว้ตั้งแต่ `0008`/`0010`/`0011`
+- `[schema]` อาการที่เจอจริง: ก่อน login (role=`anon`) ทุกหน้าใช้งานได้ปกติ
+  แต่พอ login (role=`authenticated`) กลับอ่านอะไรไม่ได้เลยนอกจาก 3 ตารางที่เพิ่ง
+  grant ไปใน `0012` — เจอ `permission denied for table assets` ที่หน้าค้นหา,
+  GIS Map, Dashboard พังหมด และหน้า Admin เองก็ขึ้นว่า "ต้องการสิทธิ์
+  analyst/admin" ทั้งที่ login เป็น admin อยู่แล้ว เพราะ query โดน block ตั้งแต่
+  ระดับ table-level grant ก่อนจะถึง RLS ด้วยซ้ำ
+- `[schema]` หลักการที่ยึดตอนแก้รอบนี้: `authenticated` (user ที่ login แล้ว)
+  ควรเห็นข้อมูลเท่ากับหรือมากกว่า `anon` เสมอ ไม่มีเหตุผลที่จะเข้มงวดน้อยกว่า —
+  เลยเลือก grant แบบ blanket ครอบทุกตารางที่มีอยู่ในตอนนี้ทีเดียว แทนไล่ grant
+  ทีละตารางแบบเดิมที่พลาดง่าย
+- `[schema]` เพิ่ม `alter default privileges ... grant select on tables to
+  authenticated` ให้ตารางใหม่ในอนาคต SELECT ได้อัตโนมัติ (แก้จาก `0012` ที่ทำ
+  default privileges ไว้ครบทุก verb แต่ table grant จริงตอนนั้นไม่ครบ ตอนนี้เสริม
+  ให้ตรงกันแล้ว)
+
+### Discovered — เป็นบั๊กเดียวกับ `0012` แต่กลับด้าน
+
+- `0012` แก้ "login แล้วอ่าน role ตัวเองไม่ได้" (ตารางที่ต้องใช้ตอน login ขาด grant)
+- `0013` (รอบนี้) แก้ "login แล้วอ่านอะไรไม่ได้เลยที่เคยอ่านได้ตอนไม่ login" (ตาราง
+  public เดิมขาด grant ให้ authenticated) — เป็นด้านตรงข้ามของปัญหาเดียวกัน คือ
+  ลืมคิดว่า login เปลี่ยน effective role จาก `anon` → `authenticated` ทำให้ grant
+  set เดิมของ `anon` ใช้ไม่ได้อีกต่อไป
+- แก้ด้วย migration 2 ตัวติดกัน (`0012` + `0013`) เพราะแก้ทีละจุดตามอาการที่เจอ
+  จริงหน้างาน แทนที่จะไล่ scope ทั้งหมดตั้งแต่รอบแรก — ถ้ามีตารางใหม่ในอนาคตที่
+  ต้องเปิดให้ `anon` อ่านด้วย (`grant select ... to anon`) ต้องเช็คคู่กับ
+  `authenticated` เสมอไปด้วย ไม่งั้นจะเจอ pattern นี้ซ้ำอีกรอบตอนมี user login
+  เข้ามาใช้งานจริง
+
+---
+
 ## 2026.08.12-2
 
 ### Fixed — Schema: GRANT สิทธิ์ตารางให้ `authenticated` role (แก้ login แล้วเข้า Admin ไม่ได้)
