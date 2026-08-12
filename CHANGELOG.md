@@ -8,6 +8,22 @@
 
 ---
 
+## 2026.08.12-4
+
+## Added — Schema: เพิ่ม parcels tag และ manual status
+
+- `[schema]` migration `0014_parcels_tag_and_manual_status.sql`
+  - เพิ่ม parcels.tag text — คอลัมน์ใหม่แยกจาก verify_note (กัน collector เขียนทับ)
+  - เพิ่มค่า 'manual' ใน verify_status enum
+  - แก้ view assets_map ให้รวม manual status ด้วย (ไม่งั้นพิกัดที่แอดมินกรอกเองจะหายไปจากแผนที่ทันที) 
+    — เพิ่ม deedcity/deedampur/deedtumbol และ p.tag as parcel_tag เข้าไปใน view ด้วยเผื่อใช้ต่อ, 
+    grant select ให้ anon + authenticated ตามที่แก้ปัญหาไปก่อนหน้า
+  - เพิ่ม partial index idx_parcels_tag_not_null ช่วย filter "มี tag แล้ว/ยังไม่มี" ในหน้าที่จะทำต่อ
+- `[landsmaps_supabase.py]` แก้ is_retryable() ให้ข้าม status 'manual' (return False 
+    เหมือน matched/not_verified) — กัน collector รันซ้ำมาทับพิกัดที่แอดมินกรอกเอง
+
+---
+
 ## 2026.08.12-3
 
 ### Fixed — Schema: GRANT SELECT ให้ `authenticated` ครอบทุกตาราง/view (แก้ login แล้วอ่านข้อมูลไม่ได้เลย)

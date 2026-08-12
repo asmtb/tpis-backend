@@ -88,6 +88,7 @@ def is_retryable(cached_entry: dict | None) -> bool:
     ตัดสินว่า parcel นี้ควรยิง API ใหม่ไหม
       - ไม่เคยมีใน cache เลย                  → True (ยิงแน่นอน)
       - matched/partial_match/not_verified   → False (ไม่ retry เลย — เชื่อผลเดิม)
+      - manual                                → False (แอดมินกรอกเอง — ห้ามทับเด็ดขาด)
       - mismatch/error                        → True (ลองใหม่ได้เสมอ — อาจแก้ไขแล้ว)
       - not_found                             → True เฉพาะถ้าเกิน cooldown แล้ว
     """
@@ -95,7 +96,7 @@ def is_retryable(cached_entry: dict | None) -> bool:
         return True
 
     status = cached_entry.get("verify_status")
-    if status in ("matched", "partial_match", "not_verified"):
+    if status in ("matched", "partial_match", "not_verified", "manual"):
         return False
     if status == "not_found":
         last_attempted = cached_entry.get("last_attempted_at")
