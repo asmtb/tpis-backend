@@ -8,6 +8,48 @@
 
 ---
 
+## 2026.08.12-2
+
+### Fixed — Schema: GRANT สิทธิ์ตารางให้ `authenticated` role (แก้ login แล้วเข้า Admin ไม่ได้)
+
+- `[schema]` migration `0012_grant_authenticated_access.sql` — GRANT สิทธิ์ตารางให้
+  role `authenticated` ของ PostgreSQL ที่ไม่เคยถูก grant มาก่อนเลยตั้งแต่เริ่มโปรเจกต์
+  สาเหตุเดียวกับ migration `0002` (แก้ `service_role`) และ `0008` (แก้ `anon`) เป๊ะๆ —
+  RLS policy มีอยู่แล้วถูกต้อง (`"read own profile"`, `"admin verify parcels"` ฯลฯ)
+  แต่ PostgreSQL ต้องมี table-level `GRANT` ก่อน RLS จะถูกเช็คด้วยซ้ำ
+- `[schema]` อาการที่เจอจริง: สร้าง user + login ผ่าน Supabase Auth สำเร็จ, ตั้ง
+  `role='admin'` ใน `public.users` ถูกต้องแล้ว (เช็คใน Table Editor ก็เห็นค่าถูก)
+  แต่หน้า Admin ขึ้น "บัญชีนี้ไม่มีสิทธิ์เข้าหน้า Admin (role ปัจจุบัน: ไม่ทราบ)"
+  เพราะ `AuthContext.jsx` (ฝั่ง `tpis` repo) query
+  `select role from public.users where id = auth.uid()` โดน
+  `permission denied for table users` เงียบๆ แล้ว fallback เป็น `role: null`
+- `[schema]` ตารางที่ grant ให้ `authenticated`:
+  - `public.users` — SELECT/UPDATE (แก้บั๊กหลักที่เจอ — อ่าน role ตัวเอง + admin
+    แก้ role คนอื่นได้)
+  - `public.parcels` — SELECT/UPDATE (เตรียมไว้ให้หน้า "จัดการโฉนด" ที่กำลังจะทำ
+    ต่อฝั่ง frontend — RLS policy `"admin verify parcels"` จาก migration `0005`
+    มีอยู่แล้วแต่ไม่เคยมี table grant คู่กันเลย)
+  - `public.landsmaps_sessions` — SELECT/INSERT/UPDATE (RLS policy
+    `"admin read/insert/update sessions"` จาก migration `0006` มีอยู่แล้ว แต่ไม่
+    เคยมี table grant คู่กันเลยเช่นกัน)
+  - `user_watchlists` / `user_saved_searches` / `user_alerts` / `user_notes` /
+    `user_recent_views` — SELECT/INSERT/UPDATE/DELETE (ยังไม่มีหน้าเว็บใช้งานจริง
+    ตอนนี้ แต่ grant ไว้ล่วงหน้ากันเจอบั๊กเดิมซ้ำตอนทำหน้าที่ใช้ตารางพวกนี้ในอนาคต)
+- `[schema]` เพิ่ม `alter default privileges ... grant ... to authenticated` กันตาราง
+  ใหม่ในอนาคตพลาดแบบนี้อีก (ตามแนวเดียวกับที่ `0002`/`0008` ทำไว้กับ `service_role`
+  และ `anon`)
+
+### Discovered — pattern ของบั๊กนี้เกิดซ้ำ 3 รอบแล้ว
+
+- ทุกครั้งที่เพิ่ม role ใหม่ในการใช้งานจริง (`service_role` ตอนเริ่ม Cloud Run,
+  `anon` ตอนเปิด public read, ตอนนี้ `authenticated` ตอนเปิด login) ลืม `GRANT`
+  table-level privilege ทุกครั้ง เพราะ RLS policy ที่เขียนถูกต้องแล้วทำให้ดูเหมือน
+  "น่าจะพอ" แต่ Postgres เช็ค privilege ก่อน RLS เสมอ
+- ไม่ได้แก้ pattern นี้ในรอบนี้ (แค่ patch role ที่ตกหล่นล่าสุด) — ถ้ามี role ใหม่
+  เพิ่มในอนาคต (เช่น `analyst` เข้าใช้งานจริงผ่านหน้าเว็บ) ต้องเช็คจุดนี้ทุกครั้ง
+
+---
+
 ## 2026.08.11-1
 
 ### Added — Admin: นับ + ดูรายการ asset ใหม่ต่อ crawler run
