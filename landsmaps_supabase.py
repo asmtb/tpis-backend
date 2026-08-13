@@ -188,9 +188,19 @@ def start_run() -> int | None:
 def finish_run(run_id: int, stats: dict, success: bool):
     if not run_id:
         return
+    if stats.get("suspected_ip_block"):
+        error_message = (
+            f"suspected_ip_block=True stopped_at={stats.get('stopped_at_index')}/"
+            f"{stats.get('total', 0)} last_asset_id={stats.get('stopped_at_asset_id')}"
+        )
+    elif not success:
+        error_message = f"errors={stats.get('errors', 0)}"
+    else:
+        error_message = None
+
     sb_update_run(run_id, {
         "finished_at": datetime.now(BKK_TZ).isoformat(),
         "status":      "completed" if success else "partial",
         "total_records_fetched": stats.get("found", 0) + stats.get("not_found", 0),
-        "error_message": None if success else f"errors={stats.get('errors', 0)}",
+        "error_message": error_message,
     })

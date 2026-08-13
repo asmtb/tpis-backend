@@ -204,16 +204,39 @@ def send_landsmaps_summary(stats: dict):
     area_na       = stats.get("area_not_applicable",  0)
     errors        = stats.get("errors",               0)
     total         = stats.get("total",                0)
-    overall_ok    = errors == 0
+    ip_block      = stats.get("suspected_ip_block",    False)
+    stopped_at    = stats.get("stopped_at_index")
+    stopped_asset = stats.get("stopped_at_asset_id")
+    overall_ok    = errors == 0 and not ip_block
 
-    subject = (f"{'✅' if overall_ok else '⚠️'} TPIS LandsMaps — {_now_bkk()} | "
-               f"{found:,} matched | {area_na:,} ห้องชุด")
+    subject = (
+        f"🚫 TPIS LandsMaps — สงสัยโดน IP block ({_now_bkk()})"
+        if ip_block else
+        f"{'✅' if overall_ok else '⚠️'} TPIS LandsMaps — {_now_bkk()} | "
+        f"{found:,} matched | {area_na:,} ห้องชุด"
+    )
+
+    block_banner = ""
+    if ip_block:
+        block_banner = f"""
+        <div style="margin-top:16px;padding:12px 16px;background:#fee2e2;
+                    border-left:4px solid #dc2626;border-radius:4px;font-size:13px">
+          <strong>🚫 หยุดกลางคัน — สงสัยโดน IP block</strong><br>
+          not_found ติดกันหลายรายการแล้วเช็คซ้ำกับ parcel ที่เคยดึงสำเร็จมาก่อน
+          (canary) ก็ not_found ด้วย — เข้าข่าย Incapsula soft-block (คืนผลว่าง
+          เงียบๆ ไม่ขึ้น challenge page)<br>
+          ประมวลผลไปแล้ว <strong>{stopped_at:,}/{total:,}</strong> asset ก่อนหยุด
+          (asset_id ที่ทำค้างไว้: {stopped_asset}) — asset ที่เหลือจะถูก retry
+          อัตโนมัติในรอบถัดไป ไม่ต้องทำอะไรเพิ่ม<br>
+          <small style="color:#7f1d1d">แนะนำพัก ~24 ชม. หรือเปลี่ยนเครือข่าย/IP ก่อนรันซ้ำ</small>
+        </div>"""
 
     html = f"""
     <div style="font-family:sans-serif;max-width:600px">
-      <h2 style="color:{'#16a34a' if overall_ok else '#f59e0b'}">
-        {_status_icon(overall_ok)} TPIS LandsMaps Collector
+      <h2 style="color:{'#dc2626' if ip_block else ('#16a34a' if overall_ok else '#f59e0b')}">
+        {'🚫' if ip_block else _status_icon(overall_ok)} TPIS LandsMaps Collector
       </h2>
+      {block_banner}
 
       <table style="width:100%;border-collapse:collapse;font-size:14px">
         <tr style="background:#f3f4f6">

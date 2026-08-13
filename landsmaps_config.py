@@ -22,6 +22,15 @@ RETRY_MAX   = 3
 RETRY_DELAY = 10    # เพิ่มจาก 5 → 10 วินาที เวลา retry
 SAVE_EVERY  = 100   # ลดจาก 200 → 100 save บ่อยขึ้น กันข้อมูลหายถ้า crash
 
+# ========== BLOCK DETECTION (canary re-check) ==========
+# Incapsula บางทีไม่ขึ้น challenge page ตรงๆ (ที่ detect ได้จาก "_Incapsula" ใน
+# response text อยู่แล้วใน landsmaps_session.py) แต่ soft-block แบบเงียบๆ คือ
+# คืน HTTP 200 พร้อม result ว่างเปล่าให้ทุก request แทน — ดูเหมือน not_found
+# ธรรมดาทุกประการ ต้องเช็คด้วยวิธีอื่น: ถ้า not_found ติดกันเกิน threshold นี้
+# ให้ลองยิงซ้ำที่ parcel ตัวล่าสุดที่เคยดึงสำเร็จ (matched/mismatch) ถ้า parcel
+# นั้นก็ not_found ไปด้วย (ทั้งที่เคยสำเร็จมาก่อน) แปลว่าโดน block จริง ให้หยุด run
+BLOCK_SUSPECT_STREAK = 10
+
 # ========== NOT_FOUND RETRY COOLDOWN (กลุ่ม 5.3) ==========
 NOT_FOUND_COOLDOWN_DAYS = 30  # ไม่ retry ซ้ำถ้าเพิ่งลองไปภายในกี่วัน
 

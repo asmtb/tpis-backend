@@ -7,6 +7,60 @@
 `[WIP]` = ยังทำไม่ครบทุกกลุ่มที่วางแผนไว้ ยังไม่ deploy จริง
 
 ---
+ 
+## 2026.08.13-1
+ 
+### Added — LandsMaps: ตรวจจับ IP block ด้วย canary re-check แทนดันรันต่อจน DB เพี้ยน
+ 
+- `[landsmaps_config.py]` เพิ่ม `BLOCK_SUSPECT_STREAK = 10` — จำนวน `not_found`
+  ติดกันสูงสุดก่อนจะสงสัยว่าโดน block แล้วเริ่มเช็ค canary
+- `[landsmaps_collector_local.py]` ปัญหาที่แก้: Incapsula บางทีไม่ขึ้น challenge
+  page ให้เห็นตรงๆ (ที่ detect ได้อยู่แล้วจาก `"_Incapsula"` ใน response text ใน
+  `landsmaps_session.py`) แต่ soft-block แบบเงียบๆ คือคืน HTTP 200 พร้อม result
+  ว่างเปล่าให้ทุก request แทน — หน้าตาเหมือน `not_found` ธรรมดาทุกประการ ทำให้
+  แม้จะมี `DELAY_SEC`/`DELAY_JITTER` แล้วก็ยังหลุดไม่ 100% และรันต่อไปเรื่อยๆ
+  เขียน `not_found` เก๊เข้า DB จำนวนมากโดยไม่รู้ตัว จนกว่าจะไปเช็คซ้ำทีหลังแล้ว
+  พบว่ารายการที่เคยดึงได้กลับหาไม่เจอ
+- `[landsmaps_collector_local.py]` เพิ่มกลไก canary re-check:
+  - เก็บ `last_good_key` = (provid, amph2, deedno) ของ parcel ล่าสุดที่ดึงสำเร็จ
+    จริง (`matched` หรือ `mismatch` ก็นับ — แปลว่า LandsMaps ตอบข้อมูลจริงมาให้)
+  - `_seed_canary_from_cache()` (ฟังก์ชันใหม่) — seed canary จาก `parcel_cache`
+    ที่โหลดจาก Supabase ตอนต้น run (parcel ที่เคย `matched`/`mismatch` จากรอบ
+    ก่อนๆ) ใช้ตอนยังไม่มีรายการไหนสำเร็จเลยในรอบนี้ (เผื่อ block ตั้งแต่ต้น run)
+  - `not_found` ติดกันครบ `BLOCK_SUSPECT_STREAK` → ยิงซ้ำที่ canary
+    - canary ยังดึงได้ปกติ → ไม่ใช่ block แค่ deed ชุดนั้นไม่มีอยู่จริงเยอะ —
+      ทำงานต่อตามปกติ
+    - canary ก็ `not_found`/error ด้วยทั้งที่เคยสำเร็จมาก่อน → สงสัยโดน IP
+      block ยืนยัน → หยุดการ run ทันที
+    - ไม่มี canary ให้เช็คเลย (ยังไม่เคยสำเร็จทั้งรอบนี้และไม่มี cache เก่า) →
+      หยุดไว้ก่อนเพื่อความปลอดภัยเช่นกัน แทนเดาต่อแบบไม่มีข้อมูลอ้างอิง
+- `[landsmaps_collector_local.py]` เปลี่ยนวิธีเขียน `not_found` ลง DB จาก
+  "เขียนทันทีทุกครั้ง" เป็น **buffer ใน `pending_not_found` ระหว่าง streak** —
+  กัน false `not_found` ปนเข้าระบบตอนโดน block (ถ้าเขียนทันทีแล้วพบทีหลังว่า
+  โดน block จริง ข้อมูลที่เขียนไปแล้วจะเป็นของปลอม แล้วโดน cooldown 30 วันจาก
+  `is_retryable()` ทำให้ไม่ retry ให้อีกนานโดยไม่ได้ตั้งใจ):
+  - streak จบด้วยเจอรายการสำเร็จ (ก่อนถึง threshold) → flush เขียนลง DB ตามปกติ
+  - ถึง threshold แล้ว canary ผ่าน → flush เขียนลง DB (ของจริง)
+  - canary ไม่ผ่าน → **ทิ้ง buffer ทั้งหมด ไม่เขียนอะไรลง DB เลย**
+- `[landsmaps_collector_local.py]` asset ที่ทำค้างตอนโดน block **ไม่ถูก
+  `progress.mark_done()`** — ให้ `progress.json`/`is_retryable()` พา asset นั้น
+  กลับมา retry เองในรอบหน้าตามธรรมชาติ ไม่ต้องเขียน resume logic พิเศษเพิ่ม
+- `[landsmaps_supabase.py]` `finish_run()` ใส่รายละเอียด block ลง
+  `crawler_runs.error_message` เมื่อ `stats["suspected_ip_block"]` เป็น True:
+  `suspected_ip_block=True stopped_at=<index>/<total> last_asset_id=<id>`
+  แทนที่ error_message เดิมที่มีแค่ `errors=<n>`
+- `[email_summary.py]` `send_landsmaps_summary()` เพิ่ม banner สีแดงแยกกรณี
+  "🚫 หยุดกลางคัน — สงสัยโดน IP block" ชัดเจน (subject line ก็แยกต่างหากด้วย)
+  บอกจำนวน asset ที่ประมวลผลไปแล้วก่อนหยุด, asset_id ที่ทำค้างไว้, และคำแนะนำ
+  พัก ~24 ชม. หรือเปลี่ยนเครือข่าย/IP ก่อนรันซ้ำ
+### Context
+ 
+เดิม `DELAY_SEC`/`DELAY_JITTER` ปรับเพิ่มแล้วหลายรอบ (0.5→2.0→10.0 วินาที) เพื่อ
+ลดโอกาสโดน rate limit/bot detection แต่ก็ยังหลุดไม่ 100% เพราะเป็นการป้องกันเชิง
+prevent เท่านั้น รอบนี้เพิ่มชั้น detect (canary) เข้ามาเสริม — เมื่อโดน block แล้ว
+จริงๆ ระบบจะรู้ตัวและหยุดตัวเองแทนดันรันต่อจนข้อมูลเพี้ยนทั้งชุด
+
+---
 
 ## 2026.08.12-4
 

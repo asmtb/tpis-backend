@@ -32,7 +32,10 @@ import random
 import sys
 import time
 
-from landsmaps_config import PROVINCE_CODE, DELAY_SEC, DELAY_JITTER, SAVE_EVERY, load_bangkok_amphur
+from landsmaps_config import (
+    PROVINCE_CODE, DELAY_SEC, DELAY_JITTER, SAVE_EVERY, BLOCK_SUSPECT_STREAK,
+    load_bangkok_amphur,
+)
 from landsmaps_logger import LandsMapsLogger
 from landsmaps_parser import parse_deedno, validate_area
 from landsmaps_progress import LandsMapsProgressTracker
@@ -46,6 +49,21 @@ from email_summary import send_landsmaps_summary
 # บังคับ headless=False เสมอเมื่อรัน local
 # (Cloud Run version ใช้ HEADLESS=True จาก landsmaps_config.py)
 HEADLESS_LOCAL = False
+
+
+def _seed_canary_from_cache(parcel_cache: dict) -> tuple[str, str, str] | None:
+    """
+    หา canary เริ่มต้นจาก cache ที่โหลดจาก Supabase ตอนต้น run (parcel ที่เคย
+    matched/mismatch จากรอบก่อนๆ) — ใช้ตอนยังไม่มีรายการไหนสำเร็จเลยในรอบนี้
+    (เผื่อ block ตั้งแต่ต้น run) คืน None ถ้าไม่มีอะไรใน cache ให้ใช้เลย
+    (provid, amph2, deedno) จาก cache_key รูปแบบ "provid_amph2_deedno"
+    """
+    for key, entry in parcel_cache.items():
+        if entry.get("verify_status") in ("matched", "mismatch"):
+            parts = key.split("_", 2)
+            if len(parts) == 3:
+                return parts[0], parts[1], parts[2]
+    return None
 
 
 def main():
@@ -79,6 +97,7 @@ def main():
         "found": 0, "not_found": 0, "cache_hit": 0,
         "no_deedno": 0, "no_amphur": 0, "errors": 0,
         "area_match": 0, "area_mismatch": 0, "area_not_applicable": 0,
+        "suspected_ip_block": False, "stopped_at_index": None, "stopped_at_asset_id": None,
     }
 
     try:
@@ -145,6 +164,18 @@ def main():
 
         logger.section(f"เริ่ม Collect ({len(assets):,} assets)")
 
+        # ----- Block detection state (canary re-check) -----
+        # last_good_key: (provid, amph2, deedno) ของ parcel ล่าสุดที่ดึงสำเร็จจริง
+        # (matched หรือ mismatch ก็นับ — แปลว่า LandsMaps ตอบข้อมูลจริงมาให้)
+        # seed จาก cache ก่อนถ้ายังไม่เจอความสำเร็จเลยในรอบนี้ (เผื่อ block ตั้งแต่ต้น)
+        last_good_key: tuple[str, str, str] | None = _seed_canary_from_cache(parcel_cache)
+        not_found_streak = 0
+        # buffer not_found ที่ยังไม่ยืนยันว่าเป็นของจริง — รอ flush ตอน streak จบ
+        # (เจอรายการสำเร็จ หรือ canary ผ่าน) ถ้าโดน block ยืนยันแล้วจะทิ้งทั้งหมด
+        # ไม่เขียนลง DB เลย กัน false not_found ปนเข้าระบบแล้วโดน cooldown 30 วัน
+        pending_not_found: list[tuple[str, str, str, str]] = []  # (cache_key, provid, amph2, deedno)
+        block_detected = False
+
         for i, asset in enumerate(assets):
             asset_id = asset["id"]
             if progress.is_done(asset_id):
@@ -206,12 +237,63 @@ def main():
 
                 elif result == {}:
                     stats["not_found"] += 1
-                    parcel_id = upsert_parcel(provid, amph2, deedno, {"verify_status": "not_found"})
-                    parcel_cache[cache_key] = {"id": parcel_id, "verify_status": "not_found"}
+                    not_found_streak += 1
+                    pending_not_found.append((cache_key, provid, amph2, deedno))
                     logger.log_not_found("not_found", asset, cache_key=cache_key,
                                          extra={"provid": provid, "amph2": amph2, "deedno": deedno})
 
+                    if not_found_streak >= BLOCK_SUSPECT_STREAK:
+                        if last_good_key:
+                            c_provid, c_amph2, c_deedno = last_good_key
+                            logger.warning(
+                                f"⚠️  not_found ติดกัน {not_found_streak:,} รายการ — "
+                                f"เช็ค canary {c_provid}/{c_amph2}/{c_deedno} (เคยดึงสำเร็จมาก่อน) ซ้ำ"
+                            )
+                            time.sleep(DELAY_SEC)
+                            canary_result = session_mgr.fetch_parcel(c_provid, c_amph2, c_deedno)
+                            if canary_result == {} or canary_result is None:
+                                logger.error(
+                                    f"🚫 Canary ที่เคยดึงสำเร็จตอนนี้ก็ {'not_found' if canary_result == {} else 'error'} "
+                                    f"ด้วย — สงสัยโดน IP block (Incapsula soft-block คืนผลว่างเงียบๆ "
+                                    f"ไม่ขึ้น challenge page) หยุดการ run ทันที ไม่เขียน not_found "
+                                    f"ที่สะสมไว้ {len(pending_not_found)} รายการลง DB (อาจเป็นผลจาก block "
+                                    f"ไม่ใช่ของจริง)"
+                                )
+                                block_detected = True
+                                pending_not_found.clear()
+                                stats["stopped_at_index"] = i + 1
+                                stats["stopped_at_asset_id"] = asset_id
+                                break
+                            logger.info("✅ Canary ยังดึงได้ปกติ — ไม่ใช่ block แค่ deed ชุดนี้ไม่มีอยู่จริงเยอะ")
+                        else:
+                            logger.error(
+                                f"⚠️  not_found ติดกัน {not_found_streak:,} รายการ และยังไม่มี canary "
+                                f"ให้เช็ค (ยังไม่เคยดึงสำเร็จเลยทั้งรอบนี้และไม่มี cache เก่า) — หยุดไว้ก่อน"
+                                f"เพื่อความปลอดภัย สงสัยโดน block ตั้งแต่ต้น run"
+                            )
+                            block_detected = True
+                            pending_not_found.clear()
+                            stats["stopped_at_index"] = i + 1
+                            stats["stopped_at_asset_id"] = asset_id
+                            break
+
+                        # streak ผ่าน canary แล้ว → flush ของจริงลง DB แล้วรีเซ็ต
+                        for pkey, pprovid, pamph2, pdeedno in pending_not_found:
+                            p_id = upsert_parcel(pprovid, pamph2, pdeedno, {"verify_status": "not_found"})
+                            parcel_cache[pkey] = {"id": p_id, "verify_status": "not_found"}
+                        pending_not_found.clear()
+                        not_found_streak = 0
+
                 else:
+                    # เจอผลจริง — ยืนยันว่า session ยังปกติ, flush not_found ที่ค้างไว้เป็นของจริง
+                    if pending_not_found:
+                        for pkey, pprovid, pamph2, pdeedno in pending_not_found:
+                            p_id = upsert_parcel(pprovid, pamph2, pdeedno, {"verify_status": "not_found"})
+                            parcel_cache[pkey] = {"id": p_id, "verify_status": "not_found"}
+                        pending_not_found.clear()
+                    not_found_streak = 0
+                    last_good_key = (provid, amph2, deedno)
+
                     area_check = validate_area(asset, result, asset_type_id)
 
                     if area_check["reason"] == "condo_area_not_comparable":
@@ -253,6 +335,11 @@ def main():
 
                 time.sleep(DELAY_SEC + random.uniform(0, DELAY_JITTER))
 
+            if block_detected:
+                # ไม่ mark_done asset นี้ — ให้ progress.json พา asset นี้กลับมา
+                # retry เองในรอบหน้าโดยไม่ต้องมี logic พิเศษเพิ่ม
+                break
+
             progress.mark_done(asset_id)
 
             if (stats["processed"] + stats["cache_hit"]) % SAVE_EVERY == 0:
@@ -267,7 +354,8 @@ def main():
                 progress.save(stats)
 
         progress.save(stats)
-        success = True
+        stats["suspected_ip_block"] = block_detected
+        success = not block_detected
 
         logger.section("📊 สรุปผล")
         logger.info(f"  Total asset ใหม่ : {stats['total']:,}")
@@ -280,7 +368,18 @@ def main():
         logger.info(f"  📐 Area match    : {stats['area_match']:,}")
         logger.info(f"  📐 Area mismatch : {stats['area_mismatch']:,}")
         logger.info(f"  🏢 Area N/A (ห้องชุด, รอ verify): {stats['area_not_applicable']:,}")
-        logger.info("\n✅ เสร็จสิ้น")
+
+        if block_detected:
+            logger.error(
+                f"🚫 หยุดกลางคันเพราะสงสัยโดน IP block — ประมวลผลไปแล้ว "
+                f"{stats['stopped_at_index']:,}/{stats['total']:,} asset ก่อนหยุด "
+                f"(asset_id ที่ทำค้างไว้: {stats['stopped_at_asset_id']}) "
+                f"cookies ชุดนี้อาจโดน block ~24 ชม. แนะนำพักแล้วรันใหม่วันถัดไป "
+                f"หรือเปลี่ยนเครือข่าย/IP ก่อนรันซ้ำ"
+            )
+            logger.info("\n🚫 หยุดกลางคัน (สงสัย IP block) — asset ที่ยังไม่เสร็จจะถูก retry อัตโนมัติรอบหน้า")
+        else:
+            logger.info("\n✅ เสร็จสิ้น")
 
     except Exception:
         logger.error("💥 Collector ล้มเหลวกลางคัน — ดู traceback ด้านล่าง")
