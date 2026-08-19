@@ -8,6 +8,55 @@
 
 ---
  
+## 2026.08.20-1
+ 
+### Fixed — LandsMaps: `mismatch` ปลอมจาก rai/ngan เป็น `None` แทนที่จะเป็น `0`
+ 
+- `[landsmaps_parser.py]` `parse_area()` — เดิม `dict.get(key, 0)` ที่เรียกใช้ก่อนส่ง
+  เข้าฟังก์ชันนี้ใช้ default `0` ไม่ได้จริง เพราะ key `rai`/`ngan` มีอยู่จริงใน
+  dict แค่ค่าเป็น `None` (`.get()` ใช้ default เฉพาะตอนไม่มี key เลย ไม่ใช่ตอนค่า
+  เป็น `None`) แล้ว `float(str(None))` error → เดิม catch แล้ว return `None`
+  กลายเป็นเทียบกับค่าจาก LandsMaps ที่คืน `0.0` จริง → `None != 0.0` → `mismatch`
+  ทั้งที่ข้อมูลตรงกันทุกอย่าง (เจอเคสจริง: โฉนด, wa ตรงกันหมด แต่ rai/ngan ฝั่ง LED
+  เป็น `NULL` ในขณะที่ LandsMaps ตอบ `0` มา)
+- `[landsmaps_parser.py]` แก้ให้ `None`/ค่าว่างถือเป็น `0.0` เสมอ (LED ไม่กรอก
+  rai/ngan แปลว่า "0" ไม่ใช่ "ไม่ทราบค่า" — ปกติมาเป็นชุด rai/ngan/wa คู่กัน)
+  ส่วนกรณีแปลงไม่ได้จริงๆ (ข้อมูลเสีย ไม่ใช่ `None`/ว่าง) ยังคง return `None`
+  เหมือนเดิม เพื่อให้เคสนี้ไป `mismatch` ให้ admin ตรวจสอบต่อ แทนที่จะเดาว่าตรงกัน
+  ทดสอบซ้ำด้วยเคสจริงที่เจอแล้วได้ `match: True` ตามที่ควรจะเป็น
+
+### Fixed — LED: `rai`/`ngan` เก็บเป็น `NULL` ทั้งที่ค่าจริงคือ `0`
+ 
+- `[led_uploader.py]` เพิ่ม `parse_area_field()` — ฟังก์ชันแปลงค่าตัวเลขแยกสำหรับ
+  `rai`/`ngan`/`wa` โดยเฉพาะ ต่างจาก `parse_numeric()` เดิมตรงที่ `"0"` เก็บเป็น
+  `0.0` จริง ไม่ยุบเป็น `None`
+  สาเหตุที่ต้องแยกฟังก์ชันแทนแก้ `parse_numeric()` ตรงๆ: ฟังก์ชันเดิมถูกใช้ร่วมกัน
+  ทั้ง `rai`/`ngan`/`wa` และ field ราคา/หนี้ (`assetprice1-9`, `reserve_fund`,
+  `debtprice`) ซึ่ง `0` ที่ field พวกนั้นมักตั้งใจให้หมายถึง "ยังไม่กรอก" ไม่ใช่ค่า
+  จริง ถ้าแก้ `parse_numeric()` ตรงๆ ให้เก็บ `0` จริงทุก field จะเสี่ยงทำให้ field
+  ราคาที่ไม่ได้กรอกกลายเป็น `0` ปลอมปนเข้าสถิติ/aggregate แทน — จึงแยกฟังก์ชันใหม่
+  เฉพาะ 3 field พื้นที่เท่านั้น `parse_numeric()` เดิมไม่ถูกแตะเลย
+- `[led_uploader.py]` `map_to_asset()` เปลี่ยนให้ `rai`/`ngan`/`wa` เรียก
+  `parse_area_field()` แทน `parse_numeric()` เดิม
+- `[led_uploader.py]` ทดสอบแล้ว: `parse_area_field('0')` → `0.0`,
+  `parse_area_field('')`/`parse_area_field(None)` → `None` (ค่าว่างจริงๆ ยังคง
+  `None`), `parse_numeric('0')` (ราคา/หนี้) ยัง `None` เหมือนเดิมไม่กระทบ
+
+### Context — ไม่ต้อง backfill data เก่า
+ 
+- asset ที่มีอยู่แล้วใน DB ที่ `rai`/`ngan` เป็น `NULL` ผิดๆ อยู่ตอนนี้ จะถูกแก้ไข
+  อัตโนมัติในรอบ LED crawl ถัดไป (ทุก 3 วันตาม Cloud Scheduler) เพราะเป็น upsert
+  ทับด้วยค่าที่ parse ใหม่ถูกต้องแล้ว ไม่ต้องเขียน backfill script แยก
+- parcel ที่เคยได้ `verify_status='mismatch'` ปลอมจากบั๊กนี้ (ก่อนแก้
+  `landsmaps_parser.py`) ก็ retryable อยู่แล้วตามปกติ (`is_retryable()` ให้
+  `mismatch` retry ได้เสมอ) — ใช้หน้า "จัดการโฉนด" ฝั่ง frontend filter
+  `สถานะพิกัด = mismatch` แล้ว Export JSON ไปรันซ้ำกับ
+  `landsmaps_collector_local.py --file <ไฟล์>` เพื่อแก้ของเก่าที่ค้างอยู่ได้เลย
+  (ดู `CHANGELOG_WEB_2026.08.20-1.md` ฝั่ง frontend ที่ทำปุ่ม export รูปแบบนี้ไว้
+  พอดี)
+
+---
+ 
 ## 2026.08.13-2
  
 ### Added — issale_code mapping ครบทุก value
@@ -19,10 +68,12 @@
  
 - `[led_parser]` เพิ่ม `ISSALE_STATUS` mapping ครบ 20 value
   ก่อนหน้ามีแค่ 5 value (`0,1,3,13,25`) ที่เหลือแสดงว่า `ไม่ทราบ(X)`
+
 #### `tpis/src/lib/constants.js`
  
 - `[constants]` เพิ่ม `ISSALE_STATUS` mapping ครบ 20 value
   frontend จะแสดงความหมายแทน `ไม่ทราบ(X)` ในหน้า Detail → นัดประมูล
+
 #### Mapping ทั้งหมด
  
 | Code | ความหมาย | จำนวนใน DB |
@@ -95,6 +146,7 @@
   "🚫 หยุดกลางคัน — สงสัยโดน IP block" ชัดเจน (subject line ก็แยกต่างหากด้วย)
   บอกจำนวน asset ที่ประมวลผลไปแล้วก่อนหยุด, asset_id ที่ทำค้างไว้, และคำแนะนำ
   พัก ~24 ชม. หรือเปลี่ยนเครือข่าย/IP ก่อนรันซ้ำ
+
 ### Context
  
 เดิม `DELAY_SEC`/`DELAY_JITTER` ปรับเพิ่มแล้วหลายรอบ (0.5→2.0→10.0 วินาที) เพื่อ

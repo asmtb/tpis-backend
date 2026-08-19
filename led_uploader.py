@@ -94,6 +94,27 @@ def parse_numeric(v: Any) -> float | None:
     except Exception:
         return None
 
+
+def parse_area_field(v: Any) -> float | None:
+    """
+    แปลงค่า rai/ngan/wa โดยเฉพาะ — ต่างจาก parse_numeric() ตรงที่ "0" ต้องเก็บเป็น
+    0 จริง ไม่ยุบเป็น None
+
+    เหตุผลที่ต้องแยกจาก parse_numeric(): field นั้นถูกใช้ร่วมกับราคา/หนี้ด้วย
+    (assetprice1-9, reserve_fund, debtprice) ซึ่ง 0 ที่ field พวกนั้นมักหมายถึง
+    "ยังไม่กรอก" ไม่ใช่ค่าจริง — แต่ rai/ngan เป็นคนละความหมาย: ทรัพย์ที่มี "0 ไร่
+    0 งาน" เป็นเรื่องปกติมาก (ที่ดินแปลงเล็กวัดเป็นตารางวาล้วนๆ) การยุบ 0 เป็น
+    None ทำให้ระบบตีความว่า "ไม่มีข้อมูล" ทั้งที่จริงๆ มีค่าและเป็น 0 ถูกต้องแล้ว
+    ผลกระทบที่เจอจริง: landsmaps validate_area() เทียบ None (LED เก็บผิดเป็น NULL)
+    กับ 0.0 จาก LandsMaps จริง แล้วได้ mismatch ปลอมทั้งที่ข้อมูลตรงกันทุกอย่าง
+    """
+    if v is None or v == "":
+        return None
+    try:
+        return float(str(v).replace(",", "").strip())
+    except Exception:
+        return None
+
 # ================================================================
 # Dedupe — ตัด record ที่ key ซ้ำกันเป๊ะก่อน upsert
 # ================================================================
@@ -130,9 +151,9 @@ def map_to_asset(raw: dict) -> dict:
         "fsubbidnum":       raw.get("fsubbidnum"),
 
         # ขนาดที่ดิน
-        "rai":              parse_numeric(raw.get("rai")),
-        "ngan":             parse_numeric(raw.get("quaterrai") or raw.get("ngan")),
-        "wa":               parse_numeric(raw.get("wa")),
+        "rai":              parse_area_field(raw.get("rai")),
+        "ngan":             parse_area_field(raw.get("quaterrai") or raw.get("ngan")),
+        "wa":               parse_area_field(raw.get("wa")),
         "landtype":         raw.get("landtype"),
         "landdesc":         raw.get("landdesc"),
         "deedno_raw":       raw.get("deedno_raw") or raw.get("deedno", ""),

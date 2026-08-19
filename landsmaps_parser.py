@@ -11,7 +11,19 @@ __all__ = ["parse_deedno", "parse_area", "validate_area"]
 
 
 def parse_area(val):
-    """แปลงค่า rai/ngan/wa เป็น float"""
+    """แปลงค่า rai/ngan/wa เป็น float
+    None หรือค่าว่าง ถือเป็น 0.0 เสมอ — LED ไม่กรอก rai/ngan แปลว่า "0" ไม่ใช่
+    "ไม่ทราบค่า" (ปกติมาเป็นชุด rai/ngan/wa คู่กัน ถ้าตัวไหนไม่กรอกคือมันเป็น 0)
+    เดิม dict.get(key, 0) ไม่ช่วยอะไรตรงนี้เพราะ key มีอยู่จริงแค่ค่าเป็น None
+    (.get ใช้ default เฉพาะตอนไม่มี key เลย ไม่ใช่ตอนค่าเป็น None) ทำให้
+    parse_area(None) เดิมคืน None แล้วไปเทียบกับ LandsMaps ที่คืน 0.0 จริงๆ
+    กลายเป็น None != 0.0 → mismatch ทั้งที่ข้อมูลตรงกันทุกอย่าง
+
+    แปลงไม่ได้จริงๆ (ข้อมูลเสีย ไม่ใช่ None/ว่าง) ยังคงคืน None เหมือนเดิม เพื่อให้
+    เคสนี้ไป mismatch ให้ admin ตรวจสอบต่อ แทนที่จะเดาว่าตรงกันเฉยๆ
+    """
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        return 0.0
     try:
         return float(str(val).replace(",", "").strip())
     except Exception:

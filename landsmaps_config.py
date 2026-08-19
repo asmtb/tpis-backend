@@ -16,7 +16,7 @@ NOT_FOUND_FILE = "landsmaps_not_found.jsonl"
 # CURL_FILE ถูกลบแล้วในกลุ่ม 4 — session มาจาก Playwright อัตโนมัติแทน (ดู landsmaps_session.py)
 
 # ========== TIMING ==========
-DELAY_SEC   = 10.0   # เพิ่มจาก 0.5 → 2.0 วินาที ป้องกัน rate limit / bot detection
+DELAY_SEC   = 15.0   # เพิ่มจาก 0.5 → 2.0 วินาที ป้องกัน rate limit / bot detection
 DELAY_JITTER = 10.0  # random เพิ่มอีก 0–1.0 วินาที → รอจริง 2.0–3.0 วินาทีต่อ request
 RETRY_MAX   = 3
 RETRY_DELAY = 10    # เพิ่มจาก 5 → 10 วินาที เวลา retry
