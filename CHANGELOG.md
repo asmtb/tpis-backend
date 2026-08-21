@@ -7,6 +7,101 @@
 `[WIP]` = ยังทำไม่ครบทุกกลุ่มที่วางแผนไว้ ยังไม่ deploy จริง
 
 ---
+
+## 2026.08.21-1
+
+### Added — Wishlist Bid-Date Reminder (แจ้งเตือนนัดประมูลทางอีเมล)
+
+- `[wishlist_notify.py]` (ไฟล์ใหม่) — main script รันทุกวัน หา user ที่เปิด
+  `wishlist_notify_enabled=true` (migration `0015`, ตั้งค่าจากหน้า
+  `/account` ฝั่งเว็บ) แล้วเช็คว่าทรัพย์ใน `user_watchlists` ของแต่ละคนมี
+  "นัดประมูลถัดไป" ตรงกับจำนวนวันที่เลือกไว้ (`wishlist_reminder_days` เช่น
+  `{1,3,7}`) รึเปล่า ถ้าตรง → รวมทุกทรัพย์ที่ต้องแจ้งของ user คนเดียวกันเป็น
+  **อีเมลเดียว** (ไม่แยกส่งทีละทรัพย์)
+  - เขียน log เฉพาะรายการที่ **ส่งอีเมลสำเร็จแล้วจริง** เท่านั้น — ถ้าส่ง
+    อีเมลของ user คนไหน fail จะไม่บันทึกอะไรเลยสำหรับคนนั้น ปล่อยให้รอบ
+    ถัดไป (พรุ่งนี้) ลองส่งใหม่แทนที่จะข้ามไปเงียบๆ ตลอดกาล
+- `[wishlist_supabase.py]` (ไฟล์ใหม่) — query helpers เฉพาะของ job นี้ ตาม
+  pattern เดียวกับ `landsmaps_supabase.py`:
+  - `get_notify_enabled_users()`, `get_watchlist_pairs()`,
+    `get_upcoming_rounds()` (หา round ที่ `issale_code='0'` และ
+    `bid_date >= วันนี้` ที่ใกล้สุดต่อ asset), `get_assets_by_ids()`,
+    `get_already_sent_keys()`, `insert_log_rows()`
+- `[wishlist_email.py]` (ไฟล์ใหม่) — เทมเพลตอีเมลแจ้งเตือน สไตล์เดียวกับ
+  อีเมลยืนยันสมัครสมาชิกที่ตั้งไว้ใน Supabase Dashboard (สี `#0057B8`,
+  header/footer เดียวกัน) แสดงรายการทรัพย์ที่ใกล้ถึงวันนัดเป็นตาราง
+  เรียงจากวันที่ใกล้สุดขึ้นก่อน
+- `[email_summary.py]` generalize `_send()` ให้รับ `to: list[str]` เพิ่มเติม
+  (เดิม hardcode ส่งไป `NOTIFY_EMAIL` คนเดียวเสมอ ใช้ได้แค่กับอีเมลสรุปที่
+  ส่งหาแอดมิน) ค่า default ยังเป็น `NOTIFY_EMAIL` เหมือนเดิมถ้าไม่ระบุ `to`
+  — `send_led_summary()`/`send_landsmaps_summary()` เดิมไม่ต้องแก้อะไรเลย
+  ยังเรียก `_send(subject, html)` แบบ 2 argument เหมือนเดิม (backward
+  compatible 100%) เพิ่ม `send_email(to_email, subject, html)` เป็น public
+  wrapper สำหรับส่งหา user ทั่วไปโดยเฉพาะ ให้ `wishlist_email.py` เรียกใช้
+- `[entrypoint_wishlist_notify.sh]` (ไฟล์ใหม่) — entrypoint สำหรับ Cloud
+  Run Job ใหม่ ตาม pattern เดียวกับ `entrypoint_landsmaps.sh`
+- `[Dockerfile]` เพิ่ม `chmod +x entrypoint_wishlist_notify.sh`
+
+### Added — Schema
+
+- `[schema]` migration `0015_wishlist_reminder_prefs.sql`:
+  - เพิ่ม `wishlist_notify_enabled boolean` + `wishlist_reminder_days
+    smallint[]` ใน `public.users` (default ปิดไว้ก่อน เป็น opt-in)
+  - เปิด RLS policy `"user update own profile"` ให้ user แก้ไข **แถวตัวเอง**
+    ได้ (เดิมมีแค่ `"admin update users"` เท่านั้น — user ทั่วไปบันทึกอะไร
+    ของตัวเองไม่ได้เลยแม้แต่ preference นี้)
+  - เพิ่ม trigger `prevent_self_role_escalation()` — เพราะ RLS ควบคุมได้แค่
+    ระดับแถว ไม่ใช่ระดับคอลัมน์ การเปิด self-update แบบตรงๆ จะเปิดช่องให้
+    user แก้ column `role` ของตัวเองเป็น `'admin'` ผ่าน REST API ได้ตรงๆ
+    trigger นี้จะรีเซ็ต `role` กลับเป็นค่าเดิมเงียบๆ ทุกครั้งที่มีการเปลี่ยน
+    `role` โดยที่คนแก้ไม่ใช่ `service_role` (คือไม่ได้มาจาก backend/
+    Dashboard SQL โดยแอดมิน)
+- `[schema]` migration `0016_wishlist_reminder_log.sql` — ตาราง
+  `wishlist_reminder_log` กันส่งอีเมลซ้ำ unique key ครอบ
+  `(user_id, asset_id, round_no, bid_date, day_offset)` — จงใจรวม
+  `bid_date` เข้าไปในคีย์ด้วย เพื่อให้ถ้านัดถูกเลื่อนวัน (crawler รอบถัดไป
+  อัปเดต `bid_date` ใหม่) ระบบนับเป็นนัดใหม่ที่ยังไม่เคยแจ้ง ไม่ใช่นัดเดิม
+  ที่เคยส่งไปแล้ว — service_role เท่านั้นที่เข้าถึงได้ (ยังไม่มี UI ฝั่งเว็บ
+  ต้องอ่านตารางนี้ตรงๆ)
+
+### Infra — ยังไม่ได้ deploy จริง (รอทำเอง)
+
+ต้องสร้าง Cloud Run Job ใหม่ + Cloud Scheduler แยกจาก LED/LandsMaps เดิม
+คำสั่งอ้างอิง (ปรับตาม project จริง):
+
+```bash
+# Build + push image (ใช้ VERSION file เดิม ผ่าน build_and_push.sh ที่มีอยู่แล้ว)
+./build_and_push.sh
+
+# สร้าง Cloud Run Job ใหม่ — override entrypoint เป็นตัวใหม่ หรือสร้างผ่านเว็บได้เช่นกัน
+gcloud run jobs create tpis-wishlist-notify \
+  --image=asia-southeast3-docker.pkg.dev/tpis-led/tpis-repo/led-crawler:latest \
+  --region=asia-southeast3 \
+  --command="./entrypoint_wishlist_notify.sh" \
+  --set-env-vars="SUPABASE_URL=...,SUPABASE_SERVICE_ROLE_KEY=...,RESEND_API_KEY=...,NOTIFY_EMAIL=..." \
+  --memory=512Mi --task-timeout=600s
+
+# Cloud Scheduler — รันทุกวัน 08:00 เวลาไทย (ต่างจาก LED ที่รันทุก 3 วัน เพราะแจ้งเตือนนัดประมูลต้องเช็คทุกวัน ไม่งั้นวันที่ตรงกับ reminder_days พอดีอาจถูกข้ามไปเลย) 
+# หรือสร้างผ่านเว็บได้เช่นกัน (Google จะสร้าง URI + permission ให้อัตโนมัติ ไม่ต้องเดา format เอง ลดโอกาสผิดพลาด)
+gcloud scheduler jobs create http tpis-wishlist-notify-daily \
+  --location=asia-southeast1 \
+  --schedule="0 8 * * *" \
+  --time-zone="Asia/Bangkok" \
+  --uri="https://REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/PROJECT/jobs/tpis-wishlist-notify:run" \
+  --http-method=POST \
+  --oauth-service-account-email=SERVICE_ACCOUNT_EMAIL
+```
+
+### Testing ที่ยังไม่ได้ทำ
+
+- ยังไม่ได้ทดสอบ end-to-end จริงกับ Supabase project จริง (ทดสอบแค่
+  syntax + import ผ่าน `ast.parse` และ dry-run import ด้วย dummy env vars)
+- แนะนำก่อน deploy จริง: เปิด `wishlist_notify_enabled` ให้ user ทดสอบ 1
+  คน เพิ่มทรัพย์ที่มีนัดประมูลใกล้ๆ (1-2 วัน) เข้า wishlist แล้วรัน
+  `python wishlist_notify.py` บนเครื่องตัวเอง (มี `.env` ครบ) ดูว่าได้รับ
+  อีเมลจริงมั้ยก่อนตั้ง Cloud Scheduler ให้รันอัตโนมัติ
+
+---
  
 ## 2026.08.20-1
  

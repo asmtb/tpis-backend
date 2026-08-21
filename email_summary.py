@@ -31,14 +31,20 @@ FROM_EMAIL     = "TPIS <onboarding@resend.dev>"
 BKK_TZ         = timezone(timedelta(hours=7))
 
 
-def _send(subject: str, html: str) -> bool:
+def _send(subject: str, html: str, to: list[str] | None = None) -> bool:
     """
     ส่ง email ผ่าน Resend REST API
     คืน True ถ้าสำเร็จ, False ถ้าไม่มี key หรือ error
     (ไม่ raise exception เพราะไม่อยากให้ email failure ทำให้ crawler พัง)
+
+    to: list ของอีเมลปลายทาง — ถ้าไม่ระบุ (None) ใช้ NOTIFY_EMAIL (แอดมิน)
+        เป็น default เดิม (ใช้กับ send_led_summary/send_landsmaps_summary)
+        ถ้าระบุ ใช้ส่งหา user ทั่วไปแทน (ใช้กับ send_email() ด้านล่าง)
     """
-    if not RESEND_API_KEY or not NOTIFY_EMAIL:
-        print("⚠️  ไม่พบ RESEND_API_KEY หรือ NOTIFY_EMAIL — ข้ามการส่ง email")
+    recipients = to if to else [NOTIFY_EMAIL]
+
+    if not RESEND_API_KEY or not recipients or not recipients[0]:
+        print("⚠️  ไม่พบ RESEND_API_KEY หรือปลายทางอีเมล — ข้ามการส่ง email")
         return False
 
     try:
@@ -50,14 +56,14 @@ def _send(subject: str, html: str) -> bool:
             },
             json={
                 "from":    FROM_EMAIL,
-                "to":      [NOTIFY_EMAIL],
+                "to":      recipients,
                 "subject": subject,
                 "html":    html,
             },
             timeout=15,
         )
         if r.status_code in (200, 201):
-            print(f"📧 ส่ง email สำเร็จ → {NOTIFY_EMAIL}")
+            print(f"📧 ส่ง email สำเร็จ → {', '.join(recipients)}")
             return True
         else:
             print(f"⚠️  Resend API error {r.status_code}: {r.text[:200]}")
@@ -65,6 +71,15 @@ def _send(subject: str, html: str) -> bool:
     except Exception as e:
         print(f"⚠️  ส่ง email ไม่สำเร็จ: {e}")
         return False
+
+
+def send_email(to_email: str, subject: str, html: str) -> bool:
+    """
+    ส่ง email ไปหา user คนใดคนหนึ่งตรงๆ (ต่างจาก _send() ที่เดิม hardcode
+    ส่งไป NOTIFY_EMAIL คนเดียวเสมอ) — ใช้กับอีเมลที่ต้องส่งหา user จริง
+    เช่น wishlist_email.py (แจ้งเตือนนัดประมูล)
+    """
+    return _send(subject, html, to=[to_email])
 
 
 def _now_bkk() -> str:

@@ -9,9 +9,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # คัดลอกโค้ดทั้งหมด (รวม VERSION ไฟล์ด้วย — uploader.py อ่านตอน insert crawler_runs)
 COPY . .
 
-# ให้สิทธิ์รัน entrypoint scripts ทั้งสองตัว
-RUN chmod +x entrypoint_led.sh entrypoint_landsmaps.sh
+# ให้สิทธิ์รัน entrypoint scripts ทั้งสามตัว
+RUN chmod +x entrypoint_led.sh entrypoint_landsmaps.sh entrypoint_wishlist_notify.sh
 
 # Default เป็น LED (Cloud Scheduler ใช้ตัวนี้)
-# LandsMaps Job จะ override ด้วย --entrypoint ตอน deploy
+# LandsMaps Job และ Wishlist Reminder Job จะ override ด้วย --entrypoint ตอน deploy
 ENTRYPOINT ["./entrypoint_led.sh"]

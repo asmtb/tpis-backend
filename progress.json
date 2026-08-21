@@ -1,5 +1,9 @@
 {
   "done_asset_ids": [
+    178785,
+    178786,
+    178787,
+    178788,
     164989,
     164990,
     164991,
@@ -222,19 +226,19 @@
     173012
   ],
   "stats": {
-    "total": 204,
-    "processed": 158,
-    "found": 157,
-    "not_found": 1,
-    "cache_hit": 71,
+    "total": 11,
+    "processed": 10,
+    "found": 0,
+    "not_found": 10,
+    "cache_hit": 4,
     "no_deedno": 0,
     "no_amphur": 0,
     "errors": 0,
-    "area_match": 72,
-    "area_mismatch": 85,
+    "area_match": 0,
+    "area_mismatch": 0,
     "area_not_applicable": 0,
     "suspected_ip_block": false,
-    "stopped_at_index": null,
-    "stopped_at_asset_id": null
+    "stopped_at_index": 5,
+    "stopped_at_asset_id": 178789
   }
 }
